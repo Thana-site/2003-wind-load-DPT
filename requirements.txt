@@ -2,4 +2,5 @@ streamlit
 matplotlib.pyplot
 pandas
 importlib
-numpy 
+numpy
+mpl_toolkits.mplot3d.art3d
