@@ -3,5 +3,4 @@ matplotlib
 pandas
 importlib
 numpy
-mpl_toolkits.mplot3d
 
