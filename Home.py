@@ -455,4 +455,24 @@ with tab3:
       st.write(Pnet_Case2_max)
       st.write(Pnet_Case2_min)
 
-
+with tab4:
+    @st.cache_data
+    def convert_df(data):
+        # Ensure data is in a tabular format
+        return data.to_csv(index=False).encode("utf-8")
+    
+    # Convert and enable download
+    data_to_download = pd.DataFrame({
+        "Case 1 Max": [Pnet_Case1_max],
+        "Case 1 Min": [Pnet_Case1_min],
+        "Case 2 Max": [Pnet_Case2_max],
+        "Case 2 Min": [Pnet_Case2_min],
+    })
+    
+    csv = convert_df(data_to_download)
+    st.download_button(
+        label="Download data as CSV",
+        data=csv,
+        file_name="Pnet_data.csv",
+        mime="text/csv",
+    )
