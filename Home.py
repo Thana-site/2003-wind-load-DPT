@@ -457,24 +457,47 @@ with tab3:
 
 with tab4:
     # Prepare DataFrame for CSV export
-    data_to_download = pd.DataFrame({
-        "Pnet_Case1_Max": [Pnet_Case1_max],
-        "Pnet_Case1_Min": [Pnet_Case1_min],
-        "Pnet_Case2_Max": [Pnet_Case2_max],
-        "Pnet_Case2_Min": [Pnet_Case2_min],
-    })
+    data_to_Pnet_Case1_max = pd.DataFrame({"Pnet_Case1_Max": [Pnet_Case1_max]})
+    data_to_Pnet_Case1_min = pd.DataFrame({"Pnet_Case1_Min": [Pnet_Case1_min]})
+    data_to_Pnet_Case2_max = pd.DataFrame({"Pnet_Case2_Max": [Pnet_Case2_max]})
+    data_to_Pnet_Case2_min = pd.DataFrame({"Pnet_Case2_Min": [Pnet_Case2_min]})
 
     # Cache data conversion to CSV
     @st.cache_data
     def convert_df(df):
         return df.to_csv(index=False).encode("utf-8")
 
-    csv = convert_df(data_to_download)
+    # Convert data to CSV
+    csv1 = convert_df(data_to_Pnet_Case1_max)
+    csv2 = convert_df(data_to_Pnet_Case1_min)
+    csv3 = convert_df(data_to_Pnet_Case2_max)
+    csv4 = convert_df(data_to_Pnet_Case2_min)
 
-    # Create a download button
+    # Create download buttons
     st.download_button(
-        label="Download data as CSV",
-        data=csv,
-        file_name="Pnet_results.csv",
+        label="Download Pnet Case 1 Max",
+        data=csv1,
+        file_name="data_to_Pnet_Case1_max.csv",
+        mime="text/csv",
+    )
+
+    st.download_button(
+        label="Download Pnet Case 1 Min",
+        data=csv2,
+        file_name="data_to_Pnet_Case1_min.csv",
+        mime="text/csv",
+    )
+
+    st.download_button(
+        label="Download Pnet Case 2 Max",
+        data=csv3,
+        file_name="data_to_Pnet_Case2_max.csv",
+        mime="text/csv",
+    )
+
+    st.download_button(
+        label="Download Pnet Case 2 Min",
+        data=csv4,
+        file_name="data_to_Pnet_Case2_min.csv",
         mime="text/csv",
     )
