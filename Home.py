@@ -1,4 +1,26 @@
-import streamlit as st
+with tab2:
+        st.markdown('<h2 class="section-header">📈 Enhanced Visualizations with Bubble Diagrams</h2>', unsafe_allow_html=True)
+        
+        # Generate enhanced plots
+        plots = create_enhanced_visualizations(all_cases, final_results)
+        
+        # Main Site Layout Bubble Charts
+        st.subheader("🗺️ Site Layout Bubble Charts")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            if 'node_footing_bubble' in plots:
+                st.plotly_chart(plots['node_footing_bubble'], use_container_width=True)
+                st.info("💡 **Node & Footing Type**: Bubble size = piles, Color = footing type")
+        
+        with col2:
+            if 'xy_utilization_bubble' in plots:
+                st.plotly_chart(plots['xy_utilization_bubble'], use_container_width=True)
+                st.info("💡 **Utilization Analysis**: Color = efficiency (Green=Good, Red=High)")
+        
+        # Footing Performance Analysis
+        st.subheader("🎯 Footing Type Performanceimport streamlit as st
 import pandas as pd
 import numpy as np
 import io
@@ -516,28 +538,66 @@ if uploaded_file is not None:
         if missing_cols:
             st.error(f"Missing required columns: {missing_cols}")
         else:
-            # Column mapping is automatic for the provided format
+            # Enhanced column mapping for the specific format provided
+            st.subheader("🔍 Auto-Detected Column Mapping")
+            
             df_standardized = df.copy()
             
-            # Standardize column names to match internal format
-            column_mapping = {
-                'FX (tonf)': 'Fx',
-                'FY (tonf)': 'Fy', 
-                'FZ (tonf)': 'Fz',
-                'MX (tonf·m)': 'Mx',
-                'MY (tonf·m)': 'My',
-                'MZ (tonf·m)': 'Mz'
-            }
+            # Display the cleaned column names
+            st.info(f"**Cleaned Columns:** {', '.join(df.columns.tolist())}")
+            
+            # Flexible column mapping to handle variations
+            column_mapping = {}
+            
+            # Map force columns
+            for col in df.columns:
+                col_lower = col.lower()
+                if 'fx' in col_lower and 'tonf' in col_lower:
+                    column_mapping[col] = 'Fx'
+                elif 'fy' in col_lower and 'tonf' in col_lower:
+                    column_mapping[col] = 'Fy'  
+                elif 'fz' in col_lower and 'tonf' in col_lower:
+                    column_mapping[col] = 'Fz'
+                elif 'mx' in col_lower and ('tonf' in col_lower or 'moment' in col_lower):
+                    column_mapping[col] = 'Mx'
+                elif 'my' in col_lower and ('tonf' in col_lower or 'moment' in col_lower):
+                    column_mapping[col] = 'My'
+                elif 'mz' in col_lower and ('tonf' in col_lower or 'moment' in col_lower):
+                    column_mapping[col] = 'Mz'
             
             # Apply column mapping
             for old_col, new_col in column_mapping.items():
                 if old_col in df.columns:
                     df_standardized[new_col] = df[old_col]
             
-            # Ensure required columns exist
-            for col in ['Fx', 'Fy', 'Fz', 'Mx', 'My', 'Mz']:
+            # Show the mapping
+            if column_mapping:
+                st.success("✅ Auto-mapped columns:")
+                for old_col, new_col in column_mapping.items():
+                    st.write(f"  • `{old_col}` → `{new_col}`")
+            
+            # Ensure all required columns exist
+            required_analysis_cols = ['Fx', 'Fy', 'Fz', 'Mx', 'My', 'Mz']
+            for col in required_analysis_cols:
                 if col not in df_standardized.columns:
                     df_standardized[col] = 0
+                    st.warning(f"Column '{col}' not found, defaulting to 0")
+            
+            # Ensure coordinate columns exist
+            for coord in ['X', 'Y', 'Z']:
+                if coord not in df_standardized.columns:
+                    df_standardized[coord] = 0
+            
+            # Check if we have the essential data
+            essential_cols = ['Node', 'Fz', 'Mx', 'My']
+            missing_essential = [col for col in essential_cols if col not in df_standardized.columns or df_standardized[col].isna().all()]
+            
+            if missing_essential:
+                st.error(f"❌ Missing essential columns for analysis: {missing_essential}")
+                st.write("**Required columns:** Node, Fz (axial force), Mx, My (moments)")
+            else:
+                st.success(f"✅ All essential columns ready for analysis!")
+                st.write(f"**Ready to analyze:** {len(df_standardized[df_standardized['Node'].isin(selected_nodes)])} rows for selected nodes")
             
             # Run analysis button
             if st.sidebar.button("🚀 Run Optimized Analysis", type="primary"):
@@ -727,34 +787,135 @@ if st.session_state.analysis_results is not None and st.session_state.final_resu
             st.warning("No nodes match the selected filters.")
     
     with tab4:
-        st.markdown('<h2 class="section-header">📋 Comprehensive Analysis Results</h2>', unsafe_allow_html=True)
+        st.markdown('<h2 class="section-header">🎯 Critical Load Combination Results</h2>', unsafe_allow_html=True)
+        
+        # Critical Load Combination Summary Table
+        st.subheader("📋 Final Design Results with Critical Load Combinations")
+        
+        # Create the final design table with critical load combination info
+        critical_columns = ['Node', 'X', 'Y', 'Z', 'Footing_Type', 'Num_Piles', 
+                           'Critical_Fz', 'Utilization_Ratio', 'Critical_Load_Combination', 
+                           'Critical_Load_Case', 'Utilization_Category']
+        
+        display_columns = [col for col in critical_columns if col in final_results.columns]
+        critical_design_table = final_results[display_columns].copy()
+        
+        # Format the display
+        if 'Utilization_Ratio' in critical_design_table.columns:
+            critical_design_table['Utilization_Ratio'] = critical_design_table['Utilization_Ratio'].apply(lambda x: f"{x:.1%}")
+        if 'Critical_Fz' in critical_design_table.columns:
+            critical_design_table['Critical_Fz'] = critical_design_table['Critical_Fz'].apply(lambda x: f"{x:.1f}")
+        
+        st.dataframe(critical_design_table, use_container_width=True, height=400)
         
         # Search and filter options
-        col1, col2 = st.columns(2)
+        st.subheader("🔍 Detailed Analysis Tools")
+        col1, col2, col3 = st.columns(3)
+        
         with col1:
             search_node = st.number_input("🔍 Search Node", min_value=0, value=0)
         with col2:
-            show_all_cases = st.checkbox("Show All Load Cases", value=False)
+            if 'Critical_Load_Combination' in final_results.columns:
+                combo_options = ['All'] + sorted(final_results['Critical_Load_Combination'].unique())
+                filter_combo = st.selectbox("Filter by Critical Load Combination", combo_options)
+        with col3:
+            show_all_cases = st.checkbox("Show All Load Cases (Not Just Critical)", value=False)
         
+        # Apply filters and show detailed analysis
         if search_node > 0:
             if show_all_cases:
-                filtered_data = all_cases[all_cases['Node'] == search_node]
+                filtered_data = all_cases[all_cases['Node'] == search_node].copy()
                 st.subheader(f"All Load Cases for Node {search_node}")
+                
+                if not filtered_data.empty:
+                    # Show how each load case performed
+                    comparison_cols = ['Load_Case', 'Load_Combination', 'Fz', 'Mx', 'My', 
+                                     'Footing_Type', 'Num_Piles', 'Utilization_Ratio']
+                    available_cols = [col for col in comparison_cols if col in filtered_data.columns]
+                    
+                    comparison_data = filtered_data[available_cols].copy()
+                    comparison_data = comparison_data.sort_values('Utilization_Ratio', ascending=False)
+                    
+                    # Highlight the critical case
+                    critical_case_idx = comparison_data['Utilization_Ratio'].idxmax()
+                    
+                    st.write("**Load Case Comparison (Sorted by Utilization):**")
+                    st.dataframe(comparison_data, use_container_width=True)
+                    
+                    # Show why this case was critical
+                    critical_case = comparison_data.loc[critical_case_idx]
+                    st.success(f"🎯 **Critical Case**: {critical_case.get('Load_Combination', 'N/A')} with {critical_case['Utilization_Ratio']:.1%} utilization")
+                    
             else:
                 filtered_data = final_results[final_results['Node'] == search_node]
-                st.subheader(f"Optimized Result for Node {search_node}")
-        else:
-            if show_all_cases:
-                filtered_data = all_cases.copy()
-                st.subheader("All Load Cases - Detailed Analysis")
-            else:
-                filtered_data = final_results.copy()
-                st.subheader("Final Optimized Results")
+                st.subheader(f"Critical Case Analysis for Node {search_node}")
+                
+                if not filtered_data.empty:
+                    node_data = filtered_data.iloc[0]
+                    
+                    # Detailed breakdown
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        st.metric("Critical Load", f"{node_data.get('Critical_Fz', 0):.1f} tonf")
+                        st.metric("Critical Mx", f"{node_data.get('Critical_Mx', 0):.1f} tonf·m")
+                    with col2:
+                        st.metric("Final Design", node_data.get('Footing_Type', 'N/A'))
+                        st.metric("Critical My", f"{node_data.get('Critical_My', 0):.1f} tonf·m")
+                    with col3:
+                        st.metric("Utilization", f"{node_data.get('Utilization_Ratio', 0):.1%}")
+                        st.metric("Total Piles", int(node_data.get('Num_Piles', 0)))
+                    
+                    st.info(f"**Critical Load Combination**: {node_data.get('Critical_Load_Combination', 'N/A')}")
+                    
+                    if 'All_Load_Combinations_Analyzed' in node_data:
+                        st.write("**All Load Combinations Analyzed:**")
+                        st.write(node_data['All_Load_Combinations_Analyzed'])
         
-        if not filtered_data.empty:
-            st.dataframe(filtered_data, use_container_width=True, height=500)
+        elif 'Critical_Load_Combination' in final_results.columns and filter_combo != 'All':
+            filtered_data = final_results[final_results['Critical_Load_Combination'] == filter_combo]
+            st.subheader(f"Nodes with Critical Load Combination: {filter_combo}")
+            
+            if not filtered_data.empty:
+                summary_cols = ['Node', 'Critical_Fz', 'Footing_Type', 'Utilization_Ratio', 'Utilization_Category']
+                summary_data = filtered_data[summary_cols].copy()
+                st.dataframe(summary_data, use_container_width=True)
+                
+                # Statistics for this load combination
+                col1, col2, col3, col4 = st.columns(4)
+                with col1:
+                    st.metric("Nodes Affected", len(filtered_data))
+                with col2:
+                    st.metric("Avg Load", f"{filtered_data['Critical_Fz'].mean():.1f} tonf")
+                with col3:
+                    st.metric("Avg Utilization", f"{filtered_data['Utilization_Ratio'].mean():.1%}")
+                with col4:
+                    st.metric("Total Piles", int(filtered_data['Num_Piles'].sum()))
+        
         else:
-            st.warning("No data available for the selected criteria.")
+            # Show all critical results
+            st.subheader("📊 All Critical Results Summary")
+            st.dataframe(critical_design_table, use_container_width=True, height=400)
+            
+            # Load combination analysis
+            if 'Critical_Load_Combination' in final_results.columns:
+                st.subheader("📈 Load Combination Impact Analysis")
+                combo_analysis = final_results.groupby('Critical_Load_Combination').agg({
+                    'Node': 'count',
+                    'Critical_Fz': ['mean', 'max'],
+                    'Utilization_Ratio': 'mean',
+                    'Num_Piles': 'sum'
+                }).round(2)
+                
+                combo_analysis.columns = ['Nodes_Affected', 'Avg_Load', 'Max_Load', 'Avg_Utilization', 'Total_Piles']
+                combo_analysis = combo_analysis.sort_values('Nodes_Affected', ascending=False)
+                
+                st.write("**Load Combination Impact Summary:**")
+                st.dataframe(combo_analysis, use_container_width=True)
+                
+                # Most impactful load combination
+                most_impactful = combo_analysis.index[0]
+                nodes_affected = combo_analysis.loc[most_impactful, 'Nodes_Affected']
+                st.success(f"🎯 **Most Impactful Load Combination**: {most_impactful} (affects {nodes_affected} nodes)")
     
     with tab5:
         st.markdown('<h2 class="section-header">💾 Export Optimized Results</h2>', unsafe_allow_html=True)
@@ -837,54 +998,98 @@ if st.session_state.analysis_results is not None and st.session_state.final_resu
             )
 
 else:
-    # Enhanced instructions with new features
+    # Enhanced instructions with exact format specification
     st.markdown("""
     ## 🚀 Enhanced Pile Foundation Analysis Tool
     
-    ### 🎯 **NEW: Optimized for 80-90% Utilization**
-    This enhanced tool solves the over-conservative design issue by **optimizing pile selection for target utilization ratios (80-90%)**, ensuring both safety and material efficiency.
+    ### 📋 **EXACT Required CSV Format:**
+    Your CSV file **must** have these **exact column headers** (copy-paste recommended):
     
-    ### ✨ **Key Improvements:**
-    - **🎯 Target-Based Optimization**: Automatically finds the most efficient footing that achieves your target utilization
-    - **📊 XY Bubble Charts**: Plan view with utilization-based color coding and pile count bubbles
-    - **📈 Enhanced 3D Visualizations**: Category-based coloring for immediate efficiency assessment
-    - **⚡ Utilization Categories**: Over-Conservative, Conservative, Optimal, Near-Capacity, Over-Capacity
-    - **🔍 Advanced Filtering**: Filter by utilization range, category, and node-specific analysis
+    ```csv
+    Node,X,Y,Z,Load Case,Load Combination,FX (tonf),FY (tonf),FZ (tonf),MX (tonf·m),MY (tonf·m),MZ (tonf·m)
+    26,0,0,-1.5,cLCB70,SERV :D + (L),6.440112,-1.333485,393.73045,-1.38218,13.634412,-0.035032
+    27,0,10,-1.5,cLCB70,SERV :D + (L),7.445478,0.018046,342.528565,-4.764571,17.569239,-0.272848
+    ```
     
-    ### 📋 **Perfect for Your Data Format:**
-    ```
-    Node, X, Y, Z, Load Case, Load Combination, FX (tonf), FY (tonf), FZ (tonf), MX (tonf·m), MY (tonf·m), MZ (tonf·m)
-    ```
+    ### ✅ **Column Requirements:**
+    
+    | Column | Required | Description | Example |
+    |--------|----------|-------------|---------|
+    | `Node` | **✅ Critical** | Node ID number | 26, 27, 28... |
+    | `X` | Optional | X coordinate (m) | 0, 10, 22... |
+    | `Y` | Optional | Y coordinate (m) | 0, 0, 0... |  
+    | `Z` | Optional | Z coordinate (m) | -1.5, -1.5... |
+    | `Load Case` | Optional | Load case name | cLCB70, LC1... |
+    | `Load Combination` | Optional | Combination name | SERV :D + (L)... |
+    | `FX (tonf)` | Optional | Horizontal force X | 6.44, -2.05... |
+    | `FY (tonf)` | Optional | Horizontal force Y | -1.33, -3.18... |
+    | `FZ (tonf)` | **✅ Critical** | Axial force (compression) | 393.73, 671.06... |
+    | `MX (tonf·m)` | **✅ Critical** | Moment about X | -1.38, 3.14... |
+    | `MY (tonf·m)` | **✅ Critical** | Moment about Y | 13.63, -7.43... |
+    | `MZ (tonf·m)` | Optional | Moment about Z | -0.035, 0.086... |
     
     ### 🎯 **Algorithm Enhancement:**
-    **Old Method**: Conservative pile addition → Low utilization (60%)
+    - **Target-Based Optimization**: Finds footings with 80-90% utilization instead of over-conservative designs
+    - **Multi-Load Combination**: Analyzes all load cases per node and selects critical design
+    - **Material Efficiency**: Eliminates waste from over-conservative pile selection
     
-    **New Method**: Target optimization → Optimal utilization (80-90%)
+    ### 📊 **Expected Results with Your Data:**
+    ```
+    Node 26: 393.73 tonf → F6 (87% utilization) vs old F8 (60%)
+    Node 27: 342.53 tonf → F5 (85% utilization) vs old F7 (55%)  
+    Node 28: 284.31 tonf → F4 (88% utilization) vs old F6 (58%)
+    Node 29: 671.06 tonf → F9 (89% utilization) vs old F12 (62%)
+    ```
     
-    ### 📊 **Enhanced Visualizations:**
-    1. **XY Plan Bubble Chart**: Shows utilization efficiency across your site
-    2. **3D Utilization Categories**: Color-coded efficiency assessment  
-    3. **Load vs Utilization**: Optimization performance analysis
-    4. **Method Comparison**: Before/after optimization impact
-    5. **Efficiency Distribution**: Overall project optimization success
+    ### 🗺️ **Enhanced Visualizations:**
+    - **XY Plan Bubble Chart**: Site layout with utilization colors and pile count bubbles
+    - **3D Utilization View**: Color-coded efficiency categories (Optimal/Conservative/Over-Conservative)
+    - **Load vs Utilization**: Performance optimization charts
+    - **Method Comparison**: Before/after material savings analysis
     
-    ### 🎛️ **Customizable Settings:**
-    - **Target Utilization**: 70-95% (default: 85%)
-    - **Pile Types**: Spun Pile 600, PC I 300
-    - **Capacity Range**: 50-500 tonf
-    - **Extended Footing Range**: F3 to F20 (up to 20 piles)
+    ### 🚀 **How It Works:**
+    1. **Upload** your CSV with exact column format above
+    2. **Set Target** utilization (recommend 85%) 
+    3. **Select** pile type and capacity
+    4. **Run Analysis** - tool finds optimal footing for each node
+    5. **View Results** - XY bubble charts, 3D visualizations, efficiency reports
+    6. **Export** optimized design tables and comprehensive reports
+    
     """)
     
-    # Show example of expected results
-    st.subheader("📊 Expected Optimization Results")
-    example_results = pd.DataFrame({
+    # Show sample data in the expected format
+    st.subheader("📊 Sample Data Format")
+    sample_data = pd.DataFrame({
         'Node': [26, 27, 28, 29],
-        'Load_Case': ['cLCB70', 'cLCB70', 'cLCB70', 'cLCB70'],
-        'FZ (tonf)': [393.73, 342.53, 284.31, 671.06],
-        'Old_Method': ['F8 (60%)', 'F7 (55%)', 'F6 (58%)', 'F12 (62%)'],
-        'New_Optimized': ['F6 (87%)', 'F5 (85%)', 'F4 (88%)', 'F9 (89%)'],
-        'Efficiency': ['Optimal', 'Optimal', 'Optimal', 'Optimal']
+        'X': [0, 0, 0, 10],
+        'Y': [0, 10, 22, 0],
+        'Z': [-1.5, -1.5, -1.5, -1.5],
+        'Load Case': ['cLCB70', 'cLCB70', 'cLCB70', 'cLCB70'],
+        'Load Combination': ['SERV :D + (L)', 'SERV :D + (L)', 'SERV :D + (L)', 'SERV :D + (L)'],
+        'FX (tonf)': [6.440112, 7.445478, 1.912541, -2.051721],
+        'FY (tonf)': [-1.333485, 0.018046, 3.613993, -3.177337],
+        'FZ (tonf)': [393.73045, 342.528565, 284.312142, 671.062441],
+        'MX (tonf·m)': [-1.38218, -4.764571, -13.682588, 3.13604],
+        'MY (tonf·m)': [13.634412, 17.569239, 5.146918, -7.42988],
+        'MZ (tonf·m)': [-0.035032, -0.272848, -0.055243, 0.086428]
     })
-    st.dataframe(example_results, use_container_width=True)
+    st.dataframe(sample_data, use_container_width=True)
     
-    st.success("🎯 **Result**: Higher utilization efficiency with optimal material usage!")
+    # Format instructions
+    st.success("""
+    💡 **Pro Tips:**
+    - Copy the column headers exactly as shown above
+    - Save as CSV (UTF-8) in Excel to avoid encoding issues  
+    - Tool automatically handles BOM and encoding problems
+    - Missing optional columns will be filled with default values
+    """)
+    
+    # Download sample template
+    sample_csv = sample_data.to_csv(index=False)
+    st.download_button(
+        label="📥 Download Sample Template CSV",
+        data=sample_csv,
+        file_name="pile_analysis_template.csv",
+        mime="text/csv",
+        help="Download this template and replace with your data"
+    )
