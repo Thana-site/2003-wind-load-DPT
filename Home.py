@@ -445,7 +445,7 @@ pile_type = st.sidebar.selectbox(
 
 pile_capacity = st.sidebar.number_input(
     "⚡ Pile Capacity (tonf)",
-    min_value=50,
+    min_value=30,
     max_value=500,
     value=120,
     step=10,
