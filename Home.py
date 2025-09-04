@@ -5,11 +5,10 @@ import io
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-import plotly.figure_factory as ff
 
 # Page configuration
 st.set_page_config(
-    page_title="Advanced Pile Analysis Tool",
+    page_title="Pile Analysis Tool",
     page_icon="🏗️",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -42,23 +41,17 @@ st.markdown("""
         font-size: 1rem;
         font-weight: bold;
     }
-    .critical-node {
-        background-color: #fff3cd;
-        border-left: 5px solid #ffc107;
-        padding: 1rem;
-        margin: 0.5rem 0;
-    }
 </style>
 """, unsafe_allow_html=True)
 
 # Title
-st.markdown('<h1 class="main-header">🏗️ Advanced Pile Foundation Analysis Tool</h1>', unsafe_allow_html=True)
+st.markdown('<h1 class="main-header">🏗️ Pile Foundation Analysis Tool</h1>', unsafe_allow_html=True)
 
 # Initialize session state
-if 'analysis_results' not in st.session_state:
-    st.session_state.analysis_results = None
-if 'final_results' not in st.session_state:
-    st.session_state.final_results = None
+if 'df_results' not in st.session_state:
+    st.session_state.df_results = None
+if 'critical_footing' not in st.session_state:
+    st.session_state.critical_footing = None
 
 # Sidebar
 st.sidebar.title("📋 Configuration")
@@ -85,6 +78,7 @@ FOOTING_FACTORS = {
 def load_data(uploaded_file):
     """Load and process uploaded CSV file"""
     try:
+        # Try different encodings
         for encoding in ['latin-1', 'cp1252', 'utf-8']:
             try:
                 df = pd.read_csv(uploaded_file, encoding=encoding)
@@ -95,279 +89,98 @@ def load_data(uploaded_file):
     except Exception as e:
         return None, f"Error loading file: {str(e)}"
 
-def extract_footing_number(footing_type):
-    """Extract number from footing type (e.g., 'F5' -> 5)"""
-    try:
-        if pd.isna(footing_type):
-            return 0
-        return int(str(footing_type).replace('F', ''))
-    except:
-        return 0
-
-def analyze_single_load_case(row, pile_type, pile_capacity, df_pile):
-    """Analyze a single load case and determine required footing"""
-    
-    # Initial calculations
-    initial_piles = int(np.round(abs(row['Fz']) / pile_capacity)) + 1
-    axial_stress = abs(row['Fz']) / initial_piles
-    remaining_ratio = (pile_capacity - axial_stress) / pile_capacity
-    
-    # Round 2 calculations
-    round2_piles = initial_piles + 1
-    if remaining_ratio < 0.1:
-        round2_piles = initial_piles + 2
-    
-    footing_type_use = f"F{round2_piles}"
-    
-    # Get factors from df_pile
-    factors = df_pile[df_pile['Footing Type'] == footing_type_use]
-    if factors.empty:
-        # If footing type not found, use the largest available
-        factors = df_pile.iloc[-1:] 
-        footing_type_use = factors['Footing Type'].iloc[0]
-        round2_piles = extract_footing_number(footing_type_use)
-    
-    # Calculate ratios based on pile type
-    if pile_type == "Spun Pile 600":
-        mx_ratio = abs(row['Mx']) * factors['S_Fac_X'].iloc[0]
-        my_ratio = abs(row['My']) * factors['S_Fac_Y'].iloc[0]
-    else:  # PC I 300
-        mx_ratio = abs(row['Mx']) * factors['I_Fac_X'].iloc[0]
-        my_ratio = abs(row['My']) * factors['I_Fac_Y'].iloc[0]
-    
-    p_over_n = abs(row['Fz']) / round2_piles
-    ratio_total = p_over_n + mx_ratio + my_ratio
-    diff_capacity = ratio_total / pile_capacity
-    
-    # Round 3 calculations
-    round3_piles = round2_piles
-    if diff_capacity > 0.999:
-        round3_piles = round2_piles + 1
-    
-    final_footing_type = f"F{round3_piles}"
-    
-    return {
-        'Initial_Piles': initial_piles,
-        'Round2_Piles': round2_piles,
-        'Round3_Piles': round3_piles,
-        'Footing_Type_Round2': footing_type_use,
-        'Footing_Type_Round3': final_footing_type,
-        'Mx_Ratio': mx_ratio,
-        'My_Ratio': my_ratio,
-        'P_over_N': p_over_n,
-        'Ratio_Total': ratio_total,
-        'Diff_Capacity': diff_capacity,
-        'Axial_Stress': axial_stress,
-        'Remaining_Ratio': remaining_ratio
-    }
-
-def comprehensive_pile_analysis(df, nodes, pile_type, pile_capacity):
-    """Perform comprehensive pile analysis for multiple load combinations"""
-    
+def calculate_pile_analysis(df, nodes, pile_type, pile_capacity):
+    """Perform pile analysis calculations"""
     # Filter nodes
     df_filtered = df[df['Node'].isin(nodes)].copy()
     
     # Create footing factors DataFrame
     df_pile = pd.DataFrame(FOOTING_FACTORS)
     
-    # Initialize results list
-    all_results = []
+    # Initial calculations
+    df_filtered['Number of Initial Pile'] = np.round(df_filtered['FZ (tonf)'] / pile_capacity) + 1
+    df_filtered["Initial Pile Capacity"] = pile_capacity * df_filtered["Number of Initial Pile"]
+    df_filtered["Axial Stress"] = df_filtered["FZ (tonf)"] / df_filtered["Number of Initial Pile"]
+    df_filtered["Pile Capacity Remaining"] = pile_capacity - df_filtered["Axial Stress"]
+    df_filtered["Pile Capacity Remaining Ratio"] = (pile_capacity - df_filtered["Axial Stress"]) / pile_capacity
     
-    # Process each row (each load combination for each node)
-    for idx, row in df_filtered.iterrows():
-        # Analyze this specific load case
-        case_analysis = analyze_single_load_case(row, pile_type, pile_capacity, df_pile)
-        
-        # Combine original data with analysis results
-        result_row = {
-            'Node': row['Node'],
-            'Load_Combination': row.get('Load Combination', row.get('Load Case', f'Case_{idx}')),
-            'X': row.get('X', row.get('x', 0)),
-            'Y': row.get('Y', row.get('y', 0)), 
-            'Z': row.get('Z', row.get('z', 0)),
-            'Fx': row.get('Fx', row.get('FX (tonf)', 0)),
-            'Fy': row.get('Fy', row.get('FY (tonf)', 0)),
-            'Fz': row.get('Fz', row.get('FZ (tonf)', row.get('Fz', 0))),
-            'Mx': row.get('Mx', row.get('MX (tonf·m)', row.get('Mx', 0))),
-            'My': row.get('My', row.get('MY (tonf·m)', row.get('My', 0))),
-            'Mz': row.get('Mz', row.get('MZ (tonf·m)', 0)),
-            'Pile_Type': pile_type
-        }
-        
-        # Add analysis results
-        result_row.update(case_analysis)
-        all_results.append(result_row)
+    # Round 2 calculations
+    df_filtered["Round 2 Num of Pile"] = df_filtered['Number of Initial Pile'] + 1
+    df_filtered.loc[df_filtered['Pile Capacity Remaining Ratio'] < 0.1, "Round 2 Num of Pile"] = df_filtered['Number of Initial Pile'] + 2
+    df_filtered["Round 2 Ratio"] = df_filtered["FZ (tonf)"] / (df_filtered["Round 2 Num of Pile"] * pile_capacity)
+    df_filtered["Footing Type Use"] = "F" + df_filtered["Round 2 Num of Pile"].astype(str)
+    df_filtered["Pile Type Use"] = pile_type
     
-    # Convert to DataFrame
-    df_all_cases = pd.DataFrame(all_results)
+    # Merge with pile factors
+    df_merged = df_filtered.merge(df_pile, left_on="Footing Type Use", right_on="Footing Type", how="left")
     
-    return df_all_cases
+    # Calculate ratios based on pile type
+    def calc_ratios(row):
+        if row["Pile Type Use"] == "Spun Pile 600":
+            mx_ratio = row["MX (tonf·m)"] * row["S_Fac_X"]
+            my_ratio = row["MY (tonf·m)"] * row["S_Fac_Y"]
+        elif row["Pile Type Use"] == "PC I 300":
+            mx_ratio = row["MX (tonf·m)"] * row["I_Fac_X"]
+            my_ratio = row["MY (tonf·m)"] * row["I_Fac_Y"]
+        else:
+            mx_ratio = None
+            my_ratio = None
+        return pd.Series([mx_ratio, my_ratio])
+    
+    df_merged[["Mx Ratio", "My Ratio"]] = df_merged.apply(calc_ratios, axis=1)
+    df_merged["P over N"] = df_merged["FZ (tonf)"] / df_merged["Round 2 Num of Pile"]
+    df_merged["Ratio Total"] = df_merged["P over N"] + abs(df_merged["My Ratio"]) + abs(df_merged["Mx Ratio"])
+    df_merged['Diff Capacity'] = abs((df_merged["Ratio Total"]) / pile_capacity)
+    
+    # Round 3 calculations
+    df_merged['Round 3 num of pile'] = np.where(
+        df_merged['Diff Capacity'] > 0.999,
+        df_merged["Round 2 Num of Pile"] + 1,
+        df_merged["Round 2 Num of Pile"]
+    )
+    
+    def calc_ratios_round3(row):
+        if row["Pile Type Use"] == "Spun Pile 600":
+            mx_ratio = row["MX (tonf·m)"] / row['Round 3 num of pile'] * row["S_Fac_X"]
+            my_ratio = row["MY (tonf·m)"] / row['Round 3 num of pile'] * row["S_Fac_Y"]
+        elif row["Pile Type Use"] == "PC I 300":
+            mx_ratio = row["MX (tonf·m)"] / row['Round 3 num of pile'] * row["I_Fac_X"]
+            my_ratio = row["MY (tonf·m)"] / row['Round 3 num of pile'] * row["I_Fac_Y"]
+        else:
+            mx_ratio = None
+            my_ratio = None
+        return pd.Series([mx_ratio, my_ratio])
+    
+    df_merged[["Mx Ratio Round 3", "My Ratio Round 3"]] = df_merged.apply(calc_ratios_round3, axis=1)
+    df_merged["P over N Round 3"] = df_merged["FZ (tonf)"] / df_merged["Round 3 num of pile"]
+    df_merged["Ratio Total Round 3"] = df_merged["P over N Round 3"] + abs(df_merged["My Ratio Round 3"]) + abs(df_merged["Mx Ratio Round 3"])
+    df_merged['Diff Capacity Round 3'] = abs((df_merged["Ratio Total Round 3"]) / pile_capacity)
+    df_merged["Footing Type Use Round 3"] = "F" + df_merged["Round 3 num of pile"].astype(str)
+    
+    return df_merged
 
-def get_critical_footing_per_node(df_all_cases):
-    """For each node, select the maximum footing type needed across all load combinations"""
+def get_critical_footing(df_merged, nodes):
+    """Get critical footing cases for each node"""
+    def extract_footing_number(footing_type):
+        try:
+            if pd.isna(footing_type):
+                return 0
+            return int(str(footing_type).replace('F', ''))
+        except:
+            return 0
     
-    def get_max_footing_for_node(group):
-        """Get the maximum footing requirement for a node across all load cases"""
-        # Add footing numbers for comparison
+    def get_most_critical_footing(group):
         group = group.copy()
-        group['Footing_Number_Round3'] = group['Footing_Type_Round3'].apply(extract_footing_number)
-        
-        # Find the maximum footing requirement
-        max_footing_idx = group['Footing_Number_Round3'].idxmax()
-        critical_case = group.loc[max_footing_idx].copy()
-        
-        # Add summary information
-        critical_case['Total_Load_Cases'] = len(group)
-        critical_case['Max_Fz'] = group['Fz'].max()
-        critical_case['Min_Fz'] = group['Fz'].min()
-        critical_case['Avg_Fz'] = group['Fz'].mean()
-        
-        # Get all footing types required for this node
-        footing_types = group['Footing_Type_Round3'].unique()
-        critical_case['All_Footing_Types_Required'] = ', '.join(sorted(footing_types, key=extract_footing_number))
-        
-        return critical_case
+        group['Footing_Number'] = group['Footing Type Use Round 3'].apply(extract_footing_number)
+        sorted_group = group.sort_values(['Footing_Number', 'FZ (tonf)'], ascending=[False, False])
+        return sorted_group.iloc[0]
     
-    # Group by node and get critical case for each
-    critical_results = df_all_cases.groupby('Node').apply(get_max_footing_for_node).reset_index(drop=True)
+    critical_footing = df_merged.groupby('Node').apply(get_most_critical_footing).reset_index(drop=True)
     
-    # Clean up helper column
-    if 'Footing_Number_Round3' in critical_results.columns:
-        critical_results = critical_results.drop('Footing_Number_Round3', axis=1)
+    if 'Footing_Number' in critical_footing.columns:
+        critical_footing = critical_footing.drop('Footing_Number', axis=1)
     
-    return critical_results
-
-def create_visualization_plots(df_all_cases, final_results):
-    """Create comprehensive visualization plots"""
-    
-    plots = {}
-    
-    # 1. 3D Scatter plot of nodes with footing types
-    if 'X' in final_results.columns and 'Y' in final_results.columns:
-        fig_3d = px.scatter_3d(
-            final_results,
-            x='X', y='Y', z='Z',
-            color='Footing_Type_Round3',
-            size='Round3_Piles',
-            hover_data=['Node', 'Pile_Type', 'Max_Fz'],
-            title='3D Node Layout with Footing Types',
-            labels={'X': 'X Coordinate', 'Y': 'Y Coordinate', 'Z': 'Z Coordinate'}
-        )
-        fig_3d.update_layout(scene=dict(aspectmode='data'))
-        plots['3d_layout'] = fig_3d
-    
-    # 2. Load vs Pile Requirements
-    fig_load_pile = px.scatter(
-        final_results,
-        x='Max_Fz',
-        y='Round3_Piles',
-        color='Footing_Type_Round3',
-        size='Total_Load_Cases',
-        hover_data=['Node', 'Pile_Type'],
-        title='Maximum Axial Load vs Required Piles',
-        labels={'Max_Fz': 'Maximum Axial Load (tonf)', 'Round3_Piles': 'Required Piles'}
-    )
-    plots['load_vs_pile'] = fig_load_pile
-    
-    # 3. Footing Type Distribution
-    footing_dist = final_results['Footing_Type_Round3'].value_counts().sort_index()
-    fig_dist = px.pie(
-        values=footing_dist.values,
-        names=footing_dist.index,
-        title='Distribution of Required Footing Types'
-    )
-    plots['footing_distribution'] = fig_dist
-    
-    # 4. Load Combination Analysis per Node
-    load_case_summary = df_all_cases.groupby(['Node', 'Footing_Type_Round3']).size().reset_index(name='Count')
-    fig_load_cases = px.bar(
-        load_case_summary,
-        x='Node',
-        y='Count',
-        color='Footing_Type_Round3',
-        title='Load Cases by Node and Required Footing Type',
-        labels={'Count': 'Number of Load Cases', 'Node': 'Node ID'}
-    )
-    plots['load_cases_analysis'] = fig_load_cases
-    
-    # 5. Capacity Utilization Heatmap
-    if len(final_results) > 1:
-        # Create capacity utilization matrix
-        utilization_data = final_results[['Node', 'Ratio_Total', 'Round3_Piles']].copy()
-        utilization_data['Utilization_Ratio'] = utilization_data['Ratio_Total'] / 120  # Assuming 120 as capacity
-        
-        fig_heatmap = px.scatter(
-            utilization_data,
-            x='Node',
-            y='Utilization_Ratio',
-            color='Round3_Piles',
-            size='Ratio_Total',
-            title='Pile Capacity Utilization by Node',
-            labels={'Utilization_Ratio': 'Capacity Utilization Ratio', 'Node': 'Node ID'}
-        )
-        fig_heatmap.add_hline(y=1.0, line_dash="dash", line_color="red", 
-                             annotation_text="Capacity Limit")
-        plots['capacity_utilization'] = fig_heatmap
-    
-    # 6. Force Components Analysis
-    if 'Fx' in final_results.columns and 'Fy' in final_results.columns:
-        fig_forces = make_subplots(
-            rows=2, cols=2,
-            subplot_titles=('Axial Forces (Fz)', 'Horizontal Forces (Fx, Fy)', 
-                          'Moments (Mx, My)', 'Force Resultants'),
-            specs=[[{"type": "scatter"}, {"type": "scatter"}],
-                   [{"type": "scatter"}, {"type": "scatter"}]]
-        )
-        
-        # Axial forces
-        fig_forces.add_trace(
-            go.Scatter(x=final_results['Node'], y=final_results['Max_Fz'], 
-                      mode='markers+lines', name='Max Fz', 
-                      marker=dict(color='blue')),
-            row=1, col=1
-        )
-        
-        # Horizontal forces
-        fig_forces.add_trace(
-            go.Scatter(x=final_results['Node'], y=final_results['Fx'], 
-                      mode='markers', name='Fx', 
-                      marker=dict(color='red')),
-            row=1, col=2
-        )
-        fig_forces.add_trace(
-            go.Scatter(x=final_results['Node'], y=final_results['Fy'], 
-                      mode='markers', name='Fy', 
-                      marker=dict(color='green')),
-            row=1, col=2
-        )
-        
-        # Moments
-        fig_forces.add_trace(
-            go.Scatter(x=final_results['Node'], y=final_results['Mx'], 
-                      mode='markers', name='Mx', 
-                      marker=dict(color='orange')),
-            row=2, col=1
-        )
-        fig_forces.add_trace(
-            go.Scatter(x=final_results['Node'], y=final_results['My'], 
-                      mode='markers', name='My', 
-                      marker=dict(color='purple')),
-            row=2, col=1
-        )
-        
-        # Resultant forces
-        final_results['Force_Resultant'] = np.sqrt(final_results['Fx']**2 + final_results['Fy']**2 + final_results['Max_Fz']**2)
-        fig_forces.add_trace(
-            go.Scatter(x=final_results['Node'], y=final_results['Force_Resultant'], 
-                      mode='markers+lines', name='Force Resultant', 
-                      marker=dict(color='black')),
-            row=2, col=2
-        )
-        
-        fig_forces.update_layout(title_text="Comprehensive Force Analysis", height=600)
-        plots['force_analysis'] = fig_forces
-    
-    return plots
+    return critical_footing
 
 # Sidebar inputs
 uploaded_file = st.sidebar.file_uploader(
@@ -419,406 +232,238 @@ if uploaded_file is not None:
     if df is not None:
         st.success(message)
         
-        # Display data info
-        st.subheader("📊 Data Overview")
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric("Total Rows", len(df))
-        with col2:
-            st.metric("Total Columns", len(df.columns))
-        with col3:
-            if 'Node' in df.columns:
-                unique_nodes = df['Node'].nunique()
-                st.metric("Unique Nodes", unique_nodes)
-        
-        # Show available columns
-        st.write("**Available Columns:**", ", ".join(df.columns.tolist()))
-        
-        # Show sample data
-        with st.expander("📋 Preview Data (First 10 rows)"):
-            st.dataframe(df.head(10), use_container_width=True)
-        
         # Check required columns
-        required_cols = ['Node']
-        force_cols = [col for col in df.columns if any(x in col.lower() for x in ['fz', 'f_z', 'force_z', 'axial'])]
-        moment_cols = [col for col in df.columns if any(x in col.lower() for x in ['mx', 'my', 'm_x', 'm_y', 'moment'])]
-        
+        required_cols = ['Node', 'FZ (tonf)', 'MX (tonf·m)', 'MY (tonf·m)']
         missing_cols = [col for col in required_cols if col not in df.columns]
         
         if missing_cols:
             st.error(f"Missing required columns: {missing_cols}")
-        elif not force_cols:
-            st.error("No axial force column found. Looking for columns containing: 'Fz', 'FZ', 'force_z', 'axial'")
-        elif len(moment_cols) < 2:
-            st.error("Need at least 2 moment columns (Mx, My). Found: " + ", ".join(moment_cols))
+            st.info("Available columns: " + ", ".join(df.columns))
         else:
-            # Auto-detect column mappings
-            st.subheader("🔍 Column Mapping")
-            col1, col2, col3 = st.columns(3)
-            
-            with col1:
-                fz_col = st.selectbox("Axial Force Column (Fz):", force_cols)
-            with col2:
-                mx_col = st.selectbox("Moment X Column (Mx):", moment_cols)
-            with col3:
-                my_col = st.selectbox("Moment Y Column (My):", [col for col in moment_cols if col != mx_col])
-            
-            # Optional columns
-            coord_cols = [col for col in df.columns if col.upper() in ['X', 'Y', 'Z']]
-            other_force_cols = [col for col in df.columns if any(x in col.lower() for x in ['fx', 'fy', 'f_x', 'f_y'])]
-            
-            # Standardize column names
-            df_standardized = df.copy()
-            df_standardized['Fz'] = df[fz_col]
-            df_standardized['Mx'] = df[mx_col] 
-            df_standardized['My'] = df[my_col]
-            
-            # Add coordinate columns if available
-            for coord in ['X', 'Y', 'Z']:
-                coord_options = [col for col in df.columns if col.upper() == coord]
-                if coord_options:
-                    df_standardized[coord] = df[coord_options[0]]
-                else:
-                    df_standardized[coord] = 0
-            
-            # Add other force columns if available  
-            for force_col in ['Fx', 'Fy']:
-                force_options = [col for col in df.columns if col.upper() == force_col]
-                if force_options:
-                    df_standardized[force_col] = df[force_options[0]]
-                else:
-                    df_standardized[force_col] = 0
-            
             # Run analysis button
-            if st.sidebar.button("🚀 Run Comprehensive Analysis", type="primary"):
-                with st.spinner("Performing comprehensive pile analysis..."):
+            if st.sidebar.button("🚀 Run Analysis", type="primary"):
+                with st.spinner("Performing pile analysis..."):
                     try:
-                        # Perform comprehensive analysis
-                        all_cases_results = comprehensive_pile_analysis(df_standardized, selected_nodes, pile_type, pile_capacity)
-                        final_node_results = get_critical_footing_per_node(all_cases_results)
+                        # Perform analysis
+                        df_results = calculate_pile_analysis(df, selected_nodes, pile_type, pile_capacity)
+                        critical_footing = get_critical_footing(df_results, selected_nodes)
                         
                         # Store in session state
-                        st.session_state.analysis_results = all_cases_results
-                        st.session_state.final_results = final_node_results
+                        st.session_state.df_results = df_results
+                        st.session_state.critical_footing = critical_footing
                         
-                        st.success("✅ Comprehensive analysis completed successfully!")
-                        st.balloons()
-                        
+                        st.success("Analysis completed successfully!")
                     except Exception as e:
-                        st.error(f"❌ Error during analysis: {str(e)}")
-                        st.write("**Debug Info:**")
-                        st.write("DataFrame shape:", df_standardized.shape)
-                        st.write("Selected nodes:", len(selected_nodes))
+                        st.error(f"Error during analysis: {str(e)}")
 
 # Display results if available
-if st.session_state.analysis_results is not None and st.session_state.final_results is not None:
-    all_cases = st.session_state.analysis_results
-    final_results = st.session_state.final_results
+if st.session_state.df_results is not None and st.session_state.critical_footing is not None:
+    df_results = st.session_state.df_results
+    critical_footing = st.session_state.critical_footing
     
     # Create tabs for results
-    tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 Executive Summary", "📈 Visualizations", "📋 Detailed Analysis", "🎯 Critical Cases", "💾 Export"])
+    tab1, tab2, tab3, tab4 = st.tabs(["📊 Summary", "📈 Visualizations", "📋 Detailed Results", "💾 Export"])
     
     with tab1:
-        st.markdown('<h2 class="section-header">📊 Executive Summary</h2>', unsafe_allow_html=True)
+        st.markdown('<h2 class="section-header">Analysis Summary</h2>', unsafe_allow_html=True)
         
-        # Key metrics
-        col1, col2, col3, col4, col5 = st.columns(5)
+        col1, col2, col3, col4 = st.columns(4)
         
         with col1:
             st.markdown('<div class="metric-container">', unsafe_allow_html=True)
-            st.metric("Nodes Analyzed", len(final_results))
+            st.metric("Total Nodes Analyzed", len(critical_footing))
             st.markdown('</div>', unsafe_allow_html=True)
         
         with col2:
             st.markdown('<div class="metric-container">', unsafe_allow_html=True)
-            total_cases = all_cases.shape[0]
-            st.metric("Total Load Cases", total_cases)
+            max_piles = critical_footing['Round 3 num of pile'].max()
+            st.metric("Max Piles Required", int(max_piles))
             st.markdown('</div>', unsafe_allow_html=True)
         
         with col3:
             st.markdown('<div class="metric-container">', unsafe_allow_html=True)
-            max_piles = final_results['Round3_Piles'].max()
-            st.metric("Max Piles Required", int(max_piles))
+            avg_piles = critical_footing['Round 3 num of pile'].mean()
+            st.metric("Average Piles", f"{avg_piles:.1f}")
             st.markdown('</div>', unsafe_allow_html=True)
         
         with col4:
             st.markdown('<div class="metric-container">', unsafe_allow_html=True)
-            avg_piles = final_results['Round3_Piles'].mean()
-            st.metric("Average Piles", f"{avg_piles:.1f}")
-            st.markdown('</div>', unsafe_allow_html=True)
-        
-        with col5:
-            st.markdown('<div class="metric-container">', unsafe_allow_html=True)
-            total_piles = final_results['Round3_Piles'].sum()
+            total_piles = critical_footing['Round 3 num of pile'].sum()
             st.metric("Total Piles", int(total_piles))
             st.markdown('</div>', unsafe_allow_html=True)
         
-        # Summary statistics
-        st.subheader("📈 Load Distribution Summary")
-        col1, col2 = st.columns(2)
+        # Footing type distribution
+        st.subheader("Footing Type Distribution")
+        footing_dist = critical_footing['Footing Type Use Round 3'].value_counts().sort_index()
         
+        col1, col2 = st.columns([1, 1])
         with col1:
-            st.write("**Axial Load Statistics (tonf):**")
-            load_stats = final_results['Max_Fz'].describe()
-            st.dataframe(load_stats.to_frame().T, use_container_width=True)
+            fig_pie = px.pie(
+                values=footing_dist.values,
+                names=footing_dist.index,
+                title="Distribution of Footing Types"
+            )
+            st.plotly_chart(fig_pie, use_container_width=True)
         
         with col2:
-            st.write("**Pile Requirements Distribution:**")
-            pile_dist = final_results['Round3_Piles'].value_counts().sort_index()
-            st.dataframe(pile_dist.to_frame().T, use_container_width=True)
-        
-        # Critical nodes identification
-        st.subheader("🚨 Critical Nodes (Highest Load)")
-        critical_nodes = final_results.nlargest(5, 'Max_Fz')[['Node', 'Max_Fz', 'Round3_Piles', 'Footing_Type_Round3', 'Total_Load_Cases']]
-        
-        for idx, row in critical_nodes.iterrows():
-            st.markdown(f'''
-            <div class="critical-node">
-                <strong>Node {int(row['Node'])}</strong> - Max Load: {row['Max_Fz']:.1f} tonf - 
-                Required: {int(row['Round3_Piles'])} piles ({row['Footing_Type_Round3']}) - 
-                Load Cases: {int(row['Total_Load_Cases'])}
-            </div>
-            ''', unsafe_allow_html=True)
+            fig_bar = px.bar(
+                x=footing_dist.index,
+                y=footing_dist.values,
+                title="Footing Type Counts",
+                labels={'x': 'Footing Type', 'y': 'Count'}
+            )
+            st.plotly_chart(fig_bar, use_container_width=True)
     
     with tab2:
-        st.markdown('<h2 class="section-header">📈 Comprehensive Visualizations</h2>', unsafe_allow_html=True)
+        st.markdown('<h2 class="section-header">Data Visualizations</h2>', unsafe_allow_html=True)
         
-        # Generate all plots
-        plots = create_visualization_plots(all_cases, final_results)
+        # Load vs Pile Number scatter plot
+        fig_scatter = px.scatter(
+            critical_footing,
+            x='FZ (tonf)',
+            y='Round 3 num of pile',
+            color='Footing Type Use Round 3',
+            title='Axial Load vs Number of Piles',
+            labels={'FZ (tonf)': 'Axial Load (tonf)', 'Round 3 num of pile': 'Number of Piles'}
+        )
+        st.plotly_chart(fig_scatter, use_container_width=True)
         
-        # Display plots
-        if '3d_layout' in plots:
-            st.subheader("🏗️ 3D Site Layout")
-            st.plotly_chart(plots['3d_layout'], use_container_width=True)
+        # Capacity utilization
+        if 'Ratio Total Round 3' in critical_footing.columns:
+            fig_util = px.histogram(
+                critical_footing,
+                x='Ratio Total Round 3',
+                title='Pile Capacity Utilization Distribution',
+                labels={'Ratio Total Round 3': 'Total Ratio', 'count': 'Frequency'}
+            )
+            fig_util.add_vline(x=pile_capacity, line_dash="dash", line_color="red", 
+                              annotation_text=f"Capacity Limit ({pile_capacity})")
+            st.plotly_chart(fig_util, use_container_width=True)
         
-        col1, col2 = st.columns(2)
-        with col1:
-            if 'load_vs_pile' in plots:
-                st.plotly_chart(plots['load_vs_pile'], use_container_width=True)
-        with col2:
-            if 'footing_distribution' in plots:
-                st.plotly_chart(plots['footing_distribution'], use_container_width=True)
-        
-        if 'load_cases_analysis' in plots:
-            st.plotly_chart(plots['load_cases_analysis'], use_container_width=True)
-        
-        if 'capacity_utilization' in plots:
-            st.plotly_chart(plots['capacity_utilization'], use_container_width=True)
-        
-        if 'force_analysis' in plots:
-            st.plotly_chart(plots['force_analysis'], use_container_width=True)
+        # Node-wise analysis for high-load cases
+        high_load_nodes = critical_footing.nlargest(10, 'FZ (tonf)')
+        fig_node = px.bar(
+            high_load_nodes,
+            x='Node',
+            y='FZ (tonf)',
+            color='Round 3 num of pile',
+            title='Top 10 Nodes by Axial Load',
+            labels={'FZ (tonf)': 'Axial Load (tonf)', 'Round 3 num of pile': 'Piles Required'}
+        )
+        st.plotly_chart(fig_node, use_container_width=True)
     
     with tab3:
-        st.markdown('<h2 class="section-header">📋 Detailed Analysis Results</h2>', unsafe_allow_html=True)
+        st.markdown('<h2 class="section-header">Detailed Analysis Results</h2>', unsafe_allow_html=True)
         
-        # Search and filter options
-        col1, col2, col3 = st.columns(3)
+        # Display options
+        col1, col2 = st.columns([1, 1])
         with col1:
-            search_node = st.number_input("🔍 Search Node", min_value=0, value=0)
+            show_all = st.checkbox("Show All Calculations", value=False)
         with col2:
-            filter_footing = st.selectbox("Filter by Footing Type", 
-                                        ['All'] + sorted(final_results['Footing_Type_Round3'].unique()))
-        with col3:
-            show_all_cases = st.checkbox("Show All Load Cases", value=False)
+            search_node = st.number_input("Search Specific Node", min_value=0, value=0)
         
-        # Apply filters
         if search_node > 0:
-            if show_all_cases:
-                filtered_data = all_cases[all_cases['Node'] == search_node]
-                st.subheader(f"All Load Cases for Node {search_node}")
+            node_data = critical_footing[critical_footing['Node'] == search_node]
+            if not node_data.empty:
+                st.subheader(f"Results for Node {search_node}")
+                st.dataframe(node_data, use_container_width=True)
             else:
-                filtered_data = final_results[final_results['Node'] == search_node]
-                st.subheader(f"Critical Case for Node {search_node}")
+                st.warning(f"Node {search_node} not found in results")
         else:
-            if show_all_cases:
-                filtered_data = all_cases.copy()
-                st.subheader("All Load Cases")
+            if show_all:
+                st.subheader("Complete Analysis Results")
+                st.dataframe(df_results, use_container_width=True)
             else:
-                filtered_data = final_results.copy()
-                st.subheader("Critical Cases per Node")
-        
-        if filter_footing != 'All' and not show_all_cases:
-            filtered_data = filtered_data[filtered_data['Footing_Type_Round3'] == filter_footing]
-        
-        # Display interactive table
-        if not filtered_data.empty:
-            st.dataframe(filtered_data, use_container_width=True, height=400)
-            
-            # Show summary for filtered data
-            if len(filtered_data) > 1:
-                st.subheader("📊 Filtered Data Summary")
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    st.metric("Records", len(filtered_data))
-                with col2:
-                    if 'Max_Fz' in filtered_data.columns:
-                        st.metric("Avg Max Load", f"{filtered_data['Max_Fz'].mean():.1f} tonf")
-                    else:
-                        st.metric("Avg Load", f"{filtered_data['Fz'].mean():.1f} tonf")
-                with col3:
-                    st.metric("Avg Piles", f"{filtered_data['Round3_Piles'].mean():.1f}")
-        else:
-            st.warning("No data matches the selected filters.")
+                st.subheader("Critical Footing Cases")
+                display_cols = ['Node', 'FZ (tonf)', 'MX (tonf·m)', 'MY (tonf·m)', 
+                               'Round 3 num of pile', 'Footing Type Use Round 3', 
+                               'Ratio Total Round 3', 'Diff Capacity Round 3']
+                available_cols = [col for col in display_cols if col in critical_footing.columns]
+                st.dataframe(critical_footing[available_cols], use_container_width=True)
     
     with tab4:
-        st.markdown('<h2 class="section-header">🎯 Final Design Results</h2>', unsafe_allow_html=True)
+        st.markdown('<h2 class="section-header">Export Results</h2>', unsafe_allow_html=True)
         
-        # Create the final design table
-        design_columns = ['Node', 'X', 'Y', 'Z', 'Fx', 'Fy', 'Fz', 'Mx', 'My', 'Mz', 'Pile_Type', 'Footing_Type_Round3']
-        available_design_cols = [col for col in design_columns if col in final_results.columns]
-        
-        # Use Max_Fz if Fz not available directly
-        if 'Fz' not in final_results.columns and 'Max_Fz' in final_results.columns:
-            final_results_display = final_results.copy()
-            final_results_display['Fz'] = final_results_display['Max_Fz']
-        else:
-            final_results_display = final_results.copy()
-        
-        # Ensure all required columns exist
-        for col in design_columns:
-            if col not in final_results_display.columns:
-                if col == 'Mz':
-                    final_results_display[col] = 0  # Default value for Mz if not available
-                elif col == 'Footing_Type_Round3':
-                    # Already exists
-                    pass
-        
-        # Create the final design table
-        final_design_table = final_results_display[available_design_cols].copy()
-        final_design_table.columns = [col.replace('Footing_Type_Round3', 'Footing Type') for col in final_design_table.columns]
-        
-        st.subheader("🏗️ Final Design Table")
-        st.dataframe(final_design_table, use_container_width=True, height=400)
-        
-        # Summary by footing type
-        st.subheader("📊 Design Summary by Footing Type")
-        summary_by_footing = final_results.groupby(['Footing_Type_Round3', 'Pile_Type']).agg({
-            'Node': 'count',
-            'Round3_Piles': ['sum', 'mean'],
-            'Max_Fz': ['max', 'mean']
-        }).round(2)
-        
-        summary_by_footing.columns = ['Nodes_Count', 'Total_Piles', 'Avg_Piles_per_Node', 'Max_Load', 'Avg_Load']
-        st.dataframe(summary_by_footing, use_container_width=True)
-    
-    with tab5:
-        st.markdown('<h2 class="section-header">💾 Export Analysis Results</h2>', unsafe_allow_html=True)
-        
-        col1, col2 = st.columns(2)
+        col1, col2 = st.columns([1, 1])
         
         with col1:
-            st.subheader("📊 Final Design Results")
-            final_csv = final_design_table.to_csv(index=False)
+            st.subheader("Critical Footing Results")
+            csv_critical = critical_footing.to_csv(index=False)
             st.download_button(
-                label="📥 Download Final Design Table (CSV)",
-                data=final_csv,
-                file_name=f"final_design_{pile_type.replace(' ', '_')}.csv",
-                mime="text/csv"
-            )
-            
-            st.subheader("🎯 Critical Cases Only")
-            critical_csv = final_results.to_csv(index=False)
-            st.download_button(
-                label="📥 Download Critical Analysis (CSV)",
-                data=critical_csv,
-                file_name=f"critical_analysis_{pile_type.replace(' ', '_')}.csv",
+                label="📥 Download Critical Results as CSV",
+                data=csv_critical,
+                file_name=f"critical_footing_{pile_type.replace(' ', '_')}.csv",
                 mime="text/csv"
             )
         
         with col2:
-            st.subheader("📋 Complete Load Cases")
-            all_cases_csv = all_cases.to_csv(index=False)
+            st.subheader("Complete Analysis Results")
+            csv_complete = df_results.to_csv(index=False)
             st.download_button(
-                label="📥 Download All Load Cases (CSV)",
-                data=all_cases_csv,
-                file_name=f"all_load_cases_{pile_type.replace(' ', '_')}.csv",
+                label="📥 Download Complete Results as CSV",
+                data=csv_complete,
+                file_name=f"complete_analysis_{pile_type.replace(' ', '_')}.csv",
                 mime="text/csv"
             )
-            
-            # Generate comprehensive report
-            report = f"""# Comprehensive Pile Analysis Report
-
-## Project Parameters
-- **Pile Type**: {pile_type}
-- **Pile Capacity**: {pile_capacity} tonf
-- **Analysis Date**: {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')}
-
-## Summary Statistics
-- **Total Nodes Analyzed**: {len(final_results)}
-- **Total Load Cases**: {len(all_cases)}
-- **Maximum Piles Required**: {int(final_results['Round3_Piles'].max())}
-- **Total Piles Required**: {int(final_results['Round3_Piles'].sum())}
-- **Average Piles per Node**: {final_results['Round3_Piles'].mean():.1f}
-
-## Load Statistics
-- **Maximum Axial Load**: {final_results['Max_Fz'].max():.1f} tonf
-- **Average Axial Load**: {final_results['Max_Fz'].mean():.1f} tonf
-- **Minimum Axial Load**: {final_results['Max_Fz'].min():.1f} tonf
-
-## Footing Type Distribution
-{final_results['Footing_Type_Round3'].value_counts().to_string()}
-
-## Critical Nodes (Top 10 by Load)
-{final_results.nlargest(10, 'Max_Fz')[['Node', 'Max_Fz', 'Round3_Piles', 'Footing_Type_Round3']].to_string(index=False)}
-"""
-            
-            st.download_button(
-                label="📄 Download Comprehensive Report (MD)",
-                data=report,
-                file_name=f"pile_analysis_report_{pile_type.replace(' ', '_')}.md",
-                mime="text/markdown"
-            )
+        
+        # Summary report
+        st.subheader("Analysis Summary Report")
+        summary_report = f"""
+        # Pile Analysis Summary Report
+        
+        **Analysis Parameters:**
+        - Pile Type: {pile_type}
+        - Pile Capacity: {pile_capacity} tonf
+        - Total Nodes Analyzed: {len(critical_footing)}
+        
+        **Results Summary:**
+        - Maximum Piles Required: {int(critical_footing['Round 3 num of pile'].max())}
+        - Average Piles per Node: {critical_footing['Round 3 num of pile'].mean():.1f}
+        - Total Piles Required: {int(critical_footing['Round 3 num of pile'].sum())}
+        
+        **Footing Type Distribution:**
+        {footing_dist.to_string()}
+        """
+        
+        st.download_button(
+            label="📄 Download Summary Report",
+            data=summary_report,
+            file_name=f"analysis_summary_{pile_type.replace(' ', '_')}.md",
+            mime="text/markdown"
+        )
 
 else:
-    # Show enhanced instructions
+    # Show instructions when no file is uploaded
     st.markdown("""
-    ## 🚀 Advanced Pile Analysis Tool
+    ## 🚀 Getting Started
     
-    This tool performs comprehensive pile foundation analysis for **multiple load combinations** per node, automatically selecting the optimal footing type that can handle all load scenarios.
+    1. **Upload your CSV file** using the file uploader in the sidebar
+    2. **Select pile type** (Spun Pile 600 or PC I 300)
+    3. **Configure pile capacity** (default: 120 tonf)
+    4. **Choose nodes** (use default or specify custom nodes)
+    5. **Click "Run Analysis"** to start the calculation
     
-    ### 🔄 Analysis Process:
-    1. **Multi-Case Analysis**: Analyzes each load combination separately
-    2. **Footing Optimization**: Determines required footing for each case  
-    3. **Critical Selection**: Selects maximum footing needed per node
-    4. **Example**: Node 26 (Case 1→F4, Case 2→F5, Case 3→F6) → **Final Selection: F6**
+    ### 📋 Required CSV Columns
+    Your CSV file must contain these columns:
+    - `Node`: Node identification number
+    - `FZ (tonf)`: Axial force in tons
+    - `MX (tonf·m)`: Moment about X-axis
+    - `MY (tonf·m)`: Moment about Y-axis
     
-    ### 📋 Required CSV Format:
-    Your data should contain these columns:
-    - **Node**: Node identification number
-    - **Load Combination**: Load case identifier (optional)
-    - **Coordinates**: X, Y, Z (optional)
-    - **Forces**: Fx, Fy, Fz (Fz required)
-    - **Moments**: Mx, My, Mz (Mx, My required)
-    
-    ### 🎯 Analysis Features:
-    - ✅ **Multi-load combination handling**
-    - ✅ **Automatic critical case selection** 
-    - ✅ **3D visualization with coordinates**
-    - ✅ **Interactive force analysis**
-    - ✅ **Comprehensive reporting**
-    - ✅ **Export-ready design tables**
-    
-    ### 📊 Output Results:
-    - **Final Design Table**: Node, X, Y, Z, Fx, Fy, Fz, Mx, My, Mz, Pile Type, Footing Type
-    - **Interactive Plotly Diagrams**: 3D layout, load analysis, capacity utilization
-    - **Critical Case Analysis**: Maximum requirements per node
-    - **Comprehensive Reports**: Export-ready documentation
+    ### 🔧 Analysis Features
+    - **Iterative pile calculation** with capacity optimization
+    - **Critical case identification** for each node
+    - **Interactive visualizations** and charts
+    - **Comprehensive reporting** and export options
+    - **Support for multiple pile types** with different factors
     """)
     
-    # Enhanced example data
-    st.subheader("📊 Example Data Structure")
+    # Show example data format
+    st.subheader("📊 Example Data Format")
     example_data = pd.DataFrame({
-        'Node': [26, 26, 26, 27, 27, 28],
-        'Load Combination': ['LC1', 'LC2', 'LC3', 'LC1', 'LC2', 'LC1'],  
-        'X': [100.0, 100.0, 100.0, 105.0, 105.0, 110.0],
-        'Y': [200.0, 200.0, 200.0, 200.0, 200.0, 200.0],
-        'Z': [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-        'Fx': [10.5, 12.8, 15.2, 8.7, 11.3, 9.8],
-        'Fy': [25.3, 28.7, 32.1, 22.4, 26.8, 24.1],
-        'Fz': [450.5, 520.8, 610.2, 380.2, 420.5, 290.1],
-        'Mx': [125.3, 145.7, 165.4, 98.7, 112.3, 75.4],
-        'My': [89.2, 102.5, 118.7, 67.3, 78.9, 45.8]
+        'Node': [26, 27, 28, 29, 30],
+        'FZ (tonf)': [450.5, 380.2, 520.8, 290.1, 410.3],
+        'MX (tonf·m)': [125.3, 98.7, 156.2, 75.4, 132.1],
+        'MY (tonf·m)': [89.2, 67.3, 112.5, 45.8, 95.6]
     })
     st.dataframe(example_data, use_container_width=True)
-    
-    st.info("💡 **Pro Tip**: The tool will automatically detect column variations like 'FZ (tonf)', 'MX (tonf·m)', etc.")
