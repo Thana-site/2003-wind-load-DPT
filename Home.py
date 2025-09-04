@@ -516,28 +516,66 @@ if uploaded_file is not None:
         if missing_cols:
             st.error(f"Missing required columns: {missing_cols}")
         else:
-            # Column mapping is automatic for the provided format
+            # Enhanced column mapping for the specific format provided
+            st.subheader("🔍 Auto-Detected Column Mapping")
+            
             df_standardized = df.copy()
             
-            # Standardize column names to match internal format
-            column_mapping = {
-                'FX (tonf)': 'Fx',
-                'FY (tonf)': 'Fy', 
-                'FZ (tonf)': 'Fz',
-                'MX (tonf·m)': 'Mx',
-                'MY (tonf·m)': 'My',
-                'MZ (tonf·m)': 'Mz'
-            }
+            # Display the cleaned column names
+            st.info(f"**Cleaned Columns:** {', '.join(df.columns.tolist())}")
+            
+            # Flexible column mapping to handle variations
+            column_mapping = {}
+            
+            # Map force columns
+            for col in df.columns:
+                col_lower = col.lower()
+                if 'fx' in col_lower and 'tonf' in col_lower:
+                    column_mapping[col] = 'Fx'
+                elif 'fy' in col_lower and 'tonf' in col_lower:
+                    column_mapping[col] = 'Fy'  
+                elif 'fz' in col_lower and 'tonf' in col_lower:
+                    column_mapping[col] = 'Fz'
+                elif 'mx' in col_lower and ('tonf' in col_lower or 'moment' in col_lower):
+                    column_mapping[col] = 'Mx'
+                elif 'my' in col_lower and ('tonf' in col_lower or 'moment' in col_lower):
+                    column_mapping[col] = 'My'
+                elif 'mz' in col_lower and ('tonf' in col_lower or 'moment' in col_lower):
+                    column_mapping[col] = 'Mz'
             
             # Apply column mapping
             for old_col, new_col in column_mapping.items():
                 if old_col in df.columns:
                     df_standardized[new_col] = df[old_col]
             
-            # Ensure required columns exist
-            for col in ['Fx', 'Fy', 'Fz', 'Mx', 'My', 'Mz']:
+            # Show the mapping
+            if column_mapping:
+                st.success("✅ Auto-mapped columns:")
+                for old_col, new_col in column_mapping.items():
+                    st.write(f"  • `{old_col}` → `{new_col}`")
+            
+            # Ensure all required columns exist
+            required_analysis_cols = ['Fx', 'Fy', 'Fz', 'Mx', 'My', 'Mz']
+            for col in required_analysis_cols:
                 if col not in df_standardized.columns:
                     df_standardized[col] = 0
+                    st.warning(f"Column '{col}' not found, defaulting to 0")
+            
+            # Ensure coordinate columns exist
+            for coord in ['X', 'Y', 'Z']:
+                if coord not in df_standardized.columns:
+                    df_standardized[coord] = 0
+            
+            # Check if we have the essential data
+            essential_cols = ['Node', 'Fz', 'Mx', 'My']
+            missing_essential = [col for col in essential_cols if col not in df_standardized.columns or df_standardized[col].isna().all()]
+            
+            if missing_essential:
+                st.error(f"❌ Missing essential columns for analysis: {missing_essential}")
+                st.write("**Required columns:** Node, Fz (axial force), Mx, My (moments)")
+            else:
+                st.success(f"✅ All essential columns ready for analysis!")
+                st.write(f"**Ready to analyze:** {len(df_standardized[df_standardized['Node'].isin(selected_nodes)])} rows for selected nodes")
             
             # Run analysis button
             if st.sidebar.button("🚀 Run Optimized Analysis", type="primary"):
