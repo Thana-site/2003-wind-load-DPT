@@ -875,54 +875,121 @@ if st.session_state.analysis_results is not None and st.session_state.final_resu
             )
 
 else:
-    # Enhanced instructions with new features
+    # Enhanced instructions with structured data format
     st.markdown("""
     ## 🚀 Enhanced Pile Foundation Analysis Tool
     
-    ### 🎯 **NEW: Optimized for 80-90% Utilization**
-    This enhanced tool solves the over-conservative design issue by **optimizing pile selection for target utilization ratios (80-90%)**, ensuring both safety and material efficiency.
+    ### 📋 **Structured Data Framework**
+    This tool is designed for **your exact data format** with robust BOM and encoding handling.
     
-    ### ✨ **Key Improvements:**
-    - **🎯 Target-Based Optimization**: Automatically finds the most efficient footing that achieves your target utilization
-    - **📊 XY Bubble Charts**: Plan view with utilization-based color coding and pile count bubbles
-    - **📈 Enhanced 3D Visualizations**: Category-based coloring for immediate efficiency assessment
-    - **⚡ Utilization Categories**: Over-Conservative, Conservative, Optimal, Near-Capacity, Over-Capacity
-    - **🔍 Advanced Filtering**: Filter by utilization range, category, and node-specific analysis
+    ### ✨ **Key Features:**
+    - **🎯 Optimized for 80-90% Utilization**: No more over-conservative designs
+    - **📊 Structured Data Processing**: Expects your exact column format
+    - **🗺️ Advanced Visualizations**: XY bubble charts, 3D utilization maps
+    - **🔧 Robust File Handling**: Handles BOM, encoding issues automatically
+    - **📈 Multi-Load Analysis**: Processes all load combinations per node
     
-    ### 📋 **Perfect for Your Data Format:**
-    ```
-    Node, X, Y, Z, Load Case, Load Combination, FX (tonf), FY (tonf), FZ (tonf), MX (tonf·m), MY (tonf·m), MZ (tonf·m)
-    ```
-    
-    ### 🎯 **Algorithm Enhancement:**
-    **Old Method**: Conservative pile addition → Low utilization (60%)
-    
-    **New Method**: Target optimization → Optimal utilization (80-90%)
-    
-    ### 📊 **Enhanced Visualizations:**
-    1. **XY Plan Bubble Chart**: Shows utilization efficiency across your site
-    2. **3D Utilization Categories**: Color-coded efficiency assessment  
-    3. **Load vs Utilization**: Optimization performance analysis
-    4. **Method Comparison**: Before/after optimization impact
-    5. **Efficiency Distribution**: Overall project optimization success
-    
-    ### 🎛️ **Customizable Settings:**
-    - **Target Utilization**: 70-95% (default: 85%)
-    - **Pile Types**: Spun Pile 600, PC I 300
-    - **Capacity Range**: 50-500 tonf
-    - **Extended Footing Range**: F3 to F20 (up to 20 piles)
+    ### 📄 **Required CSV Format:**
+    Your file must have **exactly these columns** in this order:
     """)
     
-    # Show example of expected results
-    st.subheader("📊 Expected Optimization Results")
-    example_results = pd.DataFrame({
-        'Node': [26, 27, 28, 29],
-        'Load_Case': ['cLCB70', 'cLCB70', 'cLCB70', 'cLCB70'],
-        'FZ (tonf)': [393.73, 342.53, 284.31, 671.06],
-        'Old_Method': ['F8 (60%)', 'F7 (55%)', 'F6 (58%)', 'F12 (62%)'],
-        'New_Optimized': ['F6 (87%)', 'F5 (85%)', 'F4 (88%)', 'F9 (89%)'],
-        'Efficiency': ['Optimal', 'Optimal', 'Optimal', 'Optimal']
-    })
-    st.dataframe(example_results, use_container_width=True)
+    # Show expected format as a table
+    expected_columns = [
+        "Node", "X", "Y", "Z", "Load Case", "Load Combination", 
+        "FX (tonf)", "FY (tonf)", "FZ (tonf)", 
+        "MX (tonf·m)", "MY (tonf·m)", "MZ (tonf·m)"
+    ]
     
-    st.success("🎯 **Result**: Higher utilization efficiency with optimal material usage!")
+    col_df = pd.DataFrame({
+        'Column': expected_columns,
+        'Type': ['Integer', 'Float', 'Float', 'Float', 'Text', 'Text', 
+                'Float', 'Float', 'Float', 'Float', 'Float', 'Float'],
+        'Required': ['✅ Yes', '⚠️ Optional', '⚠️ Optional', '⚠️ Optional', 
+                    '⚠️ Optional', '⚠️ Optional', '⚠️ Optional', '⚠️ Optional', 
+                    '✅ Yes', '✅ Yes', '✅ Yes', '⚠️ Optional'],
+        'Description': [
+            'Node ID number',
+            'X coordinate (m)', 
+            'Y coordinate (m)',
+            'Z coordinate (m)',
+            'Load case identifier',
+            'Load combination name',
+            'X-direction force (tonf)',
+            'Y-direction force (tonf)', 
+            'Z-direction force (tonf) - CRITICAL',
+            'X-direction moment (tonf·m) - CRITICAL',
+            'Y-direction moment (tonf·m) - CRITICAL',
+            'Z-direction moment (tonf·m)'
+        ]
+    })
+    
+    st.dataframe(col_df, use_container_width=True, hide_index=True)
+    
+    st.markdown("""
+    ### 📊 **Sample Data Format:**
+    ```csv
+    Node,X,Y,Z,Load Case,Load Combination,FX (tonf),FY (tonf),FZ (tonf),MX (tonf·m),MY (tonf·m),MZ (tonf·m)
+    26,0,0,-1.5,cLCB70,SERV :D + (L),6.44,-1.33,393.73,-1.38,13.63,-0.04
+    27,0,10,-1.5,cLCB70,SERV :D + (L),7.45,0.02,342.53,-4.76,17.57,-0.27
+    28,0,22,-1.5,cLCB70,SERV :D + (L),1.91,3.61,284.31,-13.68,5.15,-0.06
+    ```
+    
+    ### 🔧 **Automatic Processing:**
+    1. **BOM Removal**: Handles `ï»¿` and encoding artifacts
+    2. **Column Mapping**: Maps your format to internal structure
+    3. **Data Validation**: Checks for required data
+    4. **Missing Data**: Auto-fills missing optional columns
+    5. **Multi-Load Handling**: Processes all combinations per node
+    
+    ### 🎯 **Expected Results:**
+    - **Optimal Utilization**: 80-90% capacity usage
+    - **Material Efficiency**: Right-sized footings
+    - **Safety Compliance**: All designs ≤ 100% capacity
+    - **Visual Analysis**: Interactive charts and 3D plots
+    
+    ### 🚀 **Process Flow:**
+    1. **Upload** your CSV file (BOM handled automatically)
+    2. **Validation** shows column mapping results  
+    3. **Configuration** set target utilization (85% default)
+    4. **Analysis** optimizes each node across all load cases
+    5. **Results** interactive visualizations and export
+    
+    ### 💡 **Pro Tips:**
+    - File encoding is handled automatically
+    - Missing coordinates default to (0,0,0)
+    - Missing forces default to 0
+    - Tool shows exactly what columns were found vs expected
+    """)
+    
+    # Show what the tool will display
+    st.subheader("📋 What You'll See After Upload")
+    
+    with st.expander("👁️ Preview of Analysis Flow"):
+        st.markdown("""
+        **1. File Processing:**
+        ```
+        ✅ Data loaded successfully with utf-8-sig encoding
+        ```
+        
+        **2. Column Mapping:**
+        ```
+        Node: ✅ Found
+        FX (tonf): ✅ Found  
+        FZ (tonf): ✅ Found
+        MX (tonf·m): ✅ Found
+        MY (tonf·m): ✅ Found
+        Load Case: ⚠️ Missing (default)
+        ```
+        
+        **3. Validation:**
+        ```  
+        ✅ 156 rows of data ready for analysis
+        ✅ 52 unique nodes found
+        ✅ Load range: -671.1 to 393.7 tonf
+        ```
+        
+        **4. Analysis Ready:**
+        ```
+        ✅ Ready to analyze 45 nodes with 156 load cases
+        ```
+        """)
