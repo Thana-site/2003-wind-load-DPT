@@ -19,8 +19,8 @@ with tab2:
                 st.plotly_chart(plots['xy_utilization_bubble'], use_container_width=True)
                 st.info("💡 **Utilization Analysis**: Color = efficiency (Green=Good, Red=High)")
         
-# Footing Performance Analysis
-st.subheader("🎯 Footing Type Performanceimport streamlit as st
+        # Footing Performance Analysis
+        st.subheader("🎯 Footing Type Performance Analysis")import streamlit as st
 import pandas as pd
 import numpy as np
 import io
