@@ -751,6 +751,12 @@ if st.session_state.analysis_results is not None and st.session_state.final_resu
             st.plotly_chart(plots['footing_bubble'], use_container_width=True)
             st.info("💡 **Bubble size** = Number of nodes using this footing, **Y-axis** = Average utilization, **X-axis** = Number of piles per footing")
         
+        # Footing Type Performance Bubble Chart
+        if 'footing_bubble' in plots:
+            st.subheader("📊 Footing Type Performance Analysis")
+            st.plotly_chart(plots['footing_bubble'], use_container_width=True)
+            st.info("💡 **Bubble size** = Number of nodes using this footing, **Y-axis** = Average utilization, **X-axis** = Number of piles per footing")
+        
         # XY Plan View with Bubble Chart
         if 'xy_bubble' in plots:
             st.subheader("🗺️ XY Plan View - Utilization Bubble Chart")
