@@ -81,6 +81,7 @@ DEFAULT_NODES = [789, 790, 791,
                 5568, 5569,
                 5782, 5784,
                 7446, 7447, 7448, 7453, 7461, 7464]
+
 # Footing type factors
 FOOTING_FACTORS = {
     "Footing Type": ["F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10", "F12", "F15", "F18", "F20"],
@@ -259,14 +260,20 @@ def get_critical_footing_per_node(df_all_cases):
         max_pile_idx = group['Num_Piles'].idxmax()
         critical_case = group.loc[max_pile_idx].copy()
         
-        # Add summary information
+        # Add summary information including critical load combination
         critical_case['Total_Load_Cases'] = len(group)
+        critical_case['Critical_Load_Combination'] = critical_case['Load_Combination']  # Store the critical load combination
         critical_case['Max_Fz'] = group['Fz'].max()
         critical_case['Min_Fz'] = group['Fz'].min()
         critical_case['Avg_Fz'] = group['Fz'].mean()
         critical_case['Max_Utilization'] = group['Utilization_Ratio'].max()
         critical_case['Min_Utilization'] = group['Utilization_Ratio'].min()
         critical_case['Avg_Utilization'] = group['Utilization_Ratio'].mean()
+        
+        # Additional critical case information
+        critical_case['Critical_Fz'] = critical_case['Fz']
+        critical_case['Critical_Mx'] = critical_case['Mx']
+        critical_case['Critical_My'] = critical_case['My']
         
         # Efficiency metrics
         critical_case['Utilization_Category'] = categorize_utilization(critical_case['Utilization_Ratio'])
@@ -291,12 +298,87 @@ def categorize_utilization(utilization):
     else:
         return "Over-Capacity"
 
+def create_footing_type_bubble_chart(final_results):
+    """Create bubble chart showing footing type distribution and performance"""
+    
+    # Aggregate data by footing type
+    footing_summary = final_results.groupby('Footing_Type').agg({
+        'Node': 'count',  # Number of nodes using this footing
+        'Utilization_Ratio': ['mean', 'std'],
+        'Num_Piles': 'first',  # Number of piles for this footing type
+        'Max_Fz': 'mean',  # Average load for this footing type
+        'Total_Stress': 'mean'
+    }).round(3)
+    
+    # Flatten column names
+    footing_summary.columns = ['Node_Count', 'Avg_Utilization', 'Utilization_Std', 'Num_Piles', 'Avg_Load', 'Avg_Stress']
+    footing_summary = footing_summary.reset_index()
+    
+    # Fill NaN std values with 0
+    footing_summary['Utilization_Std'] = footing_summary['Utilization_Std'].fillna(0)
+    
+    # Create efficiency category for each footing type
+    footing_summary['Efficiency_Category'] = footing_summary['Avg_Utilization'].apply(categorize_utilization)
+    
+    # Create bubble chart
+    fig = px.scatter(
+        footing_summary,
+        x='Num_Piles',
+        y='Avg_Utilization',
+        size='Node_Count',
+        color='Efficiency_Category',
+        hover_data=['Footing_Type', 'Avg_Load', 'Utilization_Std'],
+        title='Footing Type Performance Analysis - Bubble Chart',
+        labels={
+            'Num_Piles': 'Number of Piles per Footing',
+            'Avg_Utilization': 'Average Utilization Ratio',
+            'Node_Count': 'Number of Nodes'
+        },
+        color_discrete_map={
+            'Over-Conservative': '#28a745',
+            'Conservative': '#ffc107', 
+            'Optimal': '#17a2b8',
+            'Near-Capacity': '#fd7e14',
+            'Over-Capacity': '#dc3545'
+        },
+        size_max=50
+    )
+    
+    # Add target zone
+    fig.add_hrect(y0=0.8, y1=0.95, fillcolor="lightgreen", opacity=0.1, 
+                  annotation_text="Target Zone (80-95%)")
+    
+    # Add footing type labels
+    for _, row in footing_summary.iterrows():
+        fig.add_annotation(
+            x=row['Num_Piles'],
+            y=row['Avg_Utilization'],
+            text=row['Footing_Type'],
+            showarrow=False,
+            font=dict(size=10, color="black"),
+            bgcolor="rgba(255,255,255,0.8)",
+            bordercolor="gray",
+            borderwidth=1
+        )
+    
+    fig.update_layout(
+        showlegend=True,
+        legend=dict(title="Efficiency Category"),
+        height=600
+    )
+    
+    return fig
+
 def create_enhanced_visualizations(df_all_cases, final_results):
     """Create enhanced visualization plots including XY bubble charts and optimized 3D plots"""
     
     plots = {}
     
-    # 1. XY Plan View with Bubble Chart (Utilization-based)
+    # 1. NEW: Footing Type Bubble Chart
+    fig_footing_bubble = create_footing_type_bubble_chart(final_results)
+    plots['footing_bubble'] = fig_footing_bubble
+    
+    # 2. XY Plan View with Bubble Chart (Utilization-based)
     if 'X' in final_results.columns and 'Y' in final_results.columns:
         # Create utilization color scale
         fig_xy = px.scatter(
@@ -306,7 +388,7 @@ def create_enhanced_visualizations(df_all_cases, final_results):
             color='Utilization_Ratio',
             color_continuous_scale=['green', 'yellow', 'orange', 'red'],
             size_max=30,
-            hover_data=['Node', 'Footing_Type', 'Max_Fz', 'Utilization_Category'],
+            hover_data=['Node', 'Footing_Type', 'Critical_Load_Combination', 'Max_Fz', 'Utilization_Category'],
             title='XY Plan View - Pile Utilization Analysis',
             labels={'X': 'X Coordinate (m)', 'Y': 'Y Coordinate (m)', 
                    'Utilization_Ratio': 'Utilization Ratio'}
@@ -328,14 +410,14 @@ def create_enhanced_visualizations(df_all_cases, final_results):
         
         plots['xy_bubble'] = fig_xy
     
-    # 2. Enhanced 3D Scatter with Utilization Categories
+    # 3. Enhanced 3D Scatter with Utilization Categories
     if 'X' in final_results.columns and 'Y' in final_results.columns:
         fig_3d = px.scatter_3d(
             final_results,
             x='X', y='Y', z='Z',
             color='Utilization_Category',
             size='Num_Piles',
-            hover_data=['Node', 'Footing_Type', 'Utilization_Ratio'],
+            hover_data=['Node', 'Footing_Type', 'Critical_Load_Combination', 'Utilization_Ratio'],
             title='3D Site Layout - Utilization Categories',
             color_discrete_map={
                 'Over-Conservative': '#28a745',
@@ -348,14 +430,14 @@ def create_enhanced_visualizations(df_all_cases, final_results):
         fig_3d.update_layout(scene=dict(aspectmode='data'))
         plots['3d_utilization'] = fig_3d
     
-    # 3. Load vs Utilization Optimization Chart
+    # 4. Load vs Utilization Optimization Chart
     fig_opt = px.scatter(
         final_results,
         x='Max_Fz',
         y='Utilization_Ratio',
         color='Utilization_Category',
         size='Num_Piles',
-        hover_data=['Node', 'Footing_Type'],
+        hover_data=['Node', 'Footing_Type', 'Critical_Load_Combination'],
         title='Load vs Utilization Optimization',
         labels={'Max_Fz': 'Maximum Axial Load (tonf)', 'Utilization_Ratio': 'Utilization Ratio'}
     )
@@ -367,7 +449,7 @@ def create_enhanced_visualizations(df_all_cases, final_results):
                       annotation_text="Capacity Limit")
     plots['load_utilization'] = fig_opt
     
-    # 4. Utilization Efficiency Analysis
+    # 5. Utilization Efficiency Analysis
     utilization_summary = final_results['Utilization_Category'].value_counts()
     fig_efficiency = px.pie(
         values=utilization_summary.values,
@@ -383,7 +465,7 @@ def create_enhanced_visualizations(df_all_cases, final_results):
     )
     plots['efficiency_pie'] = fig_efficiency
     
-    # 5. Multi-Load Case Analysis
+    # 6. Multi-Load Case Analysis
     if 'Total_Load_Cases' in final_results.columns:
         fig_cases = px.scatter(
             final_results,
@@ -391,7 +473,7 @@ def create_enhanced_visualizations(df_all_cases, final_results):
             y='Utilization_Ratio',
             color='Num_Piles',
             size='Max_Fz',
-            hover_data=['Node', 'Footing_Type'],
+            hover_data=['Node', 'Footing_Type', 'Critical_Load_Combination'],
             title='Load Cases vs Utilization Analysis',
             labels={'Total_Load_Cases': 'Number of Load Cases', 'Utilization_Ratio': 'Utilization Ratio'}
         )
@@ -399,7 +481,7 @@ def create_enhanced_visualizations(df_all_cases, final_results):
                            annotation_text="Target Utilization")
         plots['cases_analysis'] = fig_cases
     
-    # 6. Comparative Analysis - Before/After Optimization
+    # 7. Comparative Analysis - Before/After Optimization
     if len(df_all_cases) > 0:
         # Create comparison data (simulate old vs new method)
         comparison_data = []
@@ -605,6 +687,29 @@ if st.session_state.analysis_results is not None and st.session_state.final_resu
             st.metric("Target Utilization", f"{target_ratio:.0%}")
             st.markdown('</div>', unsafe_allow_html=True)
         
+        # Enhanced Results Table with Critical Load Combination
+        st.subheader("🎯 Optimized Design Summary with Critical Load Cases")
+        
+        # Create enhanced display table
+        enhanced_display_columns = ['Node', 'X', 'Y', 'Footing_Type', 'Num_Piles', 
+                                  'Critical_Load_Combination', 'Critical_Fz', 'Utilization_Ratio', 
+                                  'Utilization_Category', 'Is_Safe']
+        
+        available_enhanced_columns = [col for col in enhanced_display_columns if col in final_results.columns]
+        
+        if available_enhanced_columns:
+            enhanced_display_data = final_results[available_enhanced_columns].copy()
+            
+            # Format columns for better display
+            if 'Utilization_Ratio' in enhanced_display_data.columns:
+                enhanced_display_data['Utilization_Ratio'] = enhanced_display_data['Utilization_Ratio'].apply(lambda x: f"{x:.1%}")
+            if 'Critical_Fz' in enhanced_display_data.columns:
+                enhanced_display_data['Critical_Fz'] = enhanced_display_data['Critical_Fz'].apply(lambda x: f"{x:.1f}")
+            
+            st.dataframe(enhanced_display_data, use_container_width=True, height=400)
+            
+            st.info("💡 **Critical Load Combination**: Shows which load case drives the footing selection for each node")
+        
         # Utilization categories breakdown
         st.subheader("🎯 Utilization Efficiency Breakdown")
         
@@ -639,6 +744,12 @@ if st.session_state.analysis_results is not None and st.session_state.final_resu
         
         # Generate enhanced plots
         plots = create_enhanced_visualizations(all_cases, final_results)
+        
+        # NEW: Footing Type Bubble Chart
+        if 'footing_bubble' in plots:
+            st.subheader("🏗️ Footing Type Performance - Bubble Chart")
+            st.plotly_chart(plots['footing_bubble'], use_container_width=True)
+            st.info("💡 **Bubble size** = Number of nodes using this footing, **Y-axis** = Average utilization, **X-axis** = Number of piles per footing")
         
         # XY Plan View with Bubble Chart
         if 'xy_bubble' in plots:
@@ -694,15 +805,16 @@ if st.session_state.analysis_results is not None and st.session_state.final_resu
         # Display filtered results
         st.subheader(f"📊 Filtered Results ({len(filtered_results)} nodes)")
         
-        # Key columns for utilization analysis
-        display_columns = ['Node', 'X', 'Y', 'Footing_Type', 'Num_Piles', 'Max_Fz', 
-                          'Utilization_Ratio', 'Utilization_Category', 'Total_Stress', 'Is_Safe']
+        # Key columns for utilization analysis including critical load combination
+        display_columns = ['Node', 'X', 'Y', 'Footing_Type', 'Num_Piles', 'Critical_Load_Combination', 
+                          'Max_Fz', 'Utilization_Ratio', 'Utilization_Category', 'Total_Stress', 'Is_Safe']
         available_columns = [col for col in display_columns if col in filtered_results.columns]
         
         if not filtered_results.empty:
             # Format the display
             display_data = filtered_results[available_columns].copy()
-            display_data['Utilization_Ratio'] = display_data['Utilization_Ratio'].apply(lambda x: f"{x:.1%}")
+            if 'Utilization_Ratio' in display_data.columns:
+                display_data['Utilization_Ratio'] = display_data['Utilization_Ratio'].apply(lambda x: f"{x:.1%}")
             
             st.dataframe(display_data, use_container_width=True, height=400)
             
@@ -753,26 +865,40 @@ if st.session_state.analysis_results is not None and st.session_state.final_resu
         
         if not filtered_data.empty:
             st.dataframe(filtered_data, use_container_width=True, height=500)
+            
+            # Show critical load combination insight for individual nodes
+            if search_node > 0 and not show_all_cases:
+                node_data = final_results[final_results['Node'] == search_node]
+                if not node_data.empty:
+                    critical_load = node_data.iloc[0]['Critical_Load_Combination']
+                    footing_type = node_data.iloc[0]['Footing_Type']
+                    utilization = node_data.iloc[0]['Utilization_Ratio']
+                    
+                    st.info(f"🎯 **Critical Analysis for Node {search_node}**:\n"
+                           f"- **Selected Footing**: {footing_type}\n"
+                           f"- **Critical Load Case**: {critical_load}\n"
+                           f"- **Utilization**: {utilization:.1%}")
         else:
             st.warning("No data available for the selected criteria.")
     
     with tab5:
         st.markdown('<h2 class="section-header">💾 Export Optimized Results</h2>', unsafe_allow_html=True)
         
-        # Create final design table
-        design_columns = ['Node', 'X', 'Y', 'Z', 'Footing_Type', 'Num_Piles', 'Max_Fz', 
-                         'Utilization_Ratio', 'Utilization_Category', 'Is_Safe']
-        final_design = final_results[[col for col in design_columns if col in final_results.columns]].copy()
+        # Create enhanced final design table with critical load combinations
+        enhanced_design_columns = ['Node', 'X', 'Y', 'Z', 'Footing_Type', 'Num_Piles', 
+                                 'Critical_Load_Combination', 'Critical_Fz', 'Max_Fz', 
+                                 'Utilization_Ratio', 'Utilization_Category', 'Is_Safe']
+        final_design = final_results[[col for col in enhanced_design_columns if col in final_results.columns]].copy()
         
         col1, col2 = st.columns(2)
         
         with col1:
-            st.subheader("🏗️ Final Design Table")
+            st.subheader("🏗️ Enhanced Final Design Table")
             final_csv = final_design.to_csv(index=False)
             st.download_button(
-                label="📥 Download Optimized Design (CSV)",
+                label="📥 Download Enhanced Design with Critical Load Cases (CSV)",
                 data=final_csv,
-                file_name=f"optimized_pile_design_{pile_type.replace(' ', '_')}.csv",
+                file_name=f"enhanced_pile_design_with_critical_loads_{pile_type.replace(' ', '_')}.csv",
                 mime="text/csv"
             )
             
@@ -795,11 +921,15 @@ if st.session_state.analysis_results is not None and st.session_state.final_resu
                 mime="text/csv"
             )
             
-            # Generate optimization report
+            # Generate enhanced optimization report
             optimal_nodes = len(final_results[final_results['Utilization_Category'] == 'Optimal'])
             conservative_nodes = len(final_results[final_results['Utilization_Category'].isin(['Conservative', 'Over-Conservative'])])
             
-            report = f"""# Enhanced Pile Foundation Analysis Report
+            # Footing type statistics
+            footing_type_stats = final_results['Footing_Type'].value_counts()
+            most_common_footing = footing_type_stats.index[0] if len(footing_type_stats) > 0 else 'N/A'
+            
+            report = f"""# Enhanced Pile Foundation Analysis Report with Critical Load Cases
 
 ## Optimization Parameters
 - **Pile Type**: {pile_type}
@@ -816,23 +946,31 @@ if st.session_state.analysis_results is not None and st.session_state.final_resu
 ## Material Efficiency
 - **Total Piles Required**: {final_results['Num_Piles'].sum()}
 - **Average Piles per Node**: {final_results['Num_Piles'].mean():.1f}
-- **Most Common Footing**: {final_results['Footing_Type'].mode().iloc[0] if len(final_results) > 0 else 'N/A'}
+- **Most Common Footing**: {most_common_footing} ({footing_type_stats.iloc[0] if len(footing_type_stats) > 0 else 0} nodes)
 
 ## Load Analysis
 - **Maximum Load**: {final_results['Max_Fz'].max():.1f} tonf
 - **Average Load**: {final_results['Max_Fz'].mean():.1f} tonf
 - **Load Range**: {final_results['Max_Fz'].min():.1f} - {final_results['Max_Fz'].max():.1f} tonf
 
+## Footing Type Distribution
+{footing_type_stats.to_string()}
+
+## Critical Load Combinations Analysis
+The analysis identified the critical load combination for each node that drives the footing selection.
+This information helps engineers understand which load cases are most demanding for each foundation location.
+
 ## Recommendations
 1. **Optimal Nodes**: {optimal_nodes} nodes achieve target efficiency (80-95% utilization)
 2. **Conservative Nodes**: {conservative_nodes} nodes could be optimized for material savings
 3. **Target Achievement**: {100*optimal_nodes/len(final_results):.1f}% of designs meet optimization criteria
+4. **Critical Load Case Review**: Review critical load combinations for nodes with high utilization
 """
             
             st.download_button(
-                label="📄 Download Optimization Report (MD)",
+                label="📄 Download Enhanced Optimization Report (MD)",
                 data=report,
-                file_name=f"optimization_report_{pile_type.replace(' ', '_')}.md",
+                file_name=f"enhanced_optimization_report_{pile_type.replace(' ', '_')}.md",
                 mime="text/markdown"
             )
 
@@ -841,13 +979,24 @@ else:
     st.markdown("""
     ## 🚀 Enhanced Pile Foundation Analysis Tool
     
-    ### 🎯 **NEW: Optimized for 80-90% Utilization**
-    This enhanced tool solves the over-conservative design issue by **optimizing pile selection for target utilization ratios (80-90%)**, ensuring both safety and material efficiency.
+    ### 🎯 **NEW FEATURES: Footing Type Bubble Chart & Critical Load Case Tracking**
     
-    ### ✨ **Key Improvements:**
-    - **🎯 Target-Based Optimization**: Automatically finds the most efficient footing that achieves your target utilization
-    - **📊 XY Bubble Charts**: Plan view with utilization-based color coding and pile count bubbles
-    - **📈 Enhanced 3D Visualizations**: Category-based coloring for immediate efficiency assessment
+    #### ✨ **Latest Improvements:**
+    1. **🏗️ Footing Type Bubble Chart**: Visualizes footing type performance and distribution
+       - Bubble size = Number of nodes using each footing type
+       - Y-axis = Average utilization efficiency  
+       - Color coding = Efficiency categories
+       - Shows which footing types are most/least efficient
+    
+    2. **📋 Critical Load Case Identification**: Reports exactly which load combination drives each footing selection
+       - Identifies the critical load case for each node
+       - Shows critical loads (Fz, Mx, My) that determine footing size
+       - Enhanced report tables include critical load combination information
+    
+    ### 🎯 **Core Optimization Features:**
+    - **Target-Based Optimization**: Automatically finds the most efficient footing for 80-90% utilization
+    - **📊 XY Bubble Charts**: Plan view with utilization-based color coding
+    - **📈 Enhanced 3D Visualizations**: Category-based coloring for efficiency assessment
     - **⚡ Utilization Categories**: Over-Conservative, Conservative, Optimal, Near-Capacity, Over-Capacity
     - **🔍 Advanced Filtering**: Filter by utilization range, category, and node-specific analysis
     
@@ -857,34 +1006,44 @@ else:
     ```
     
     ### 🎯 **Algorithm Enhancement:**
-    **Old Method**: Conservative pile addition → Low utilization (60%)
+    **Old Method**: Conservative pile addition → Low utilization (~60%) → Unknown critical load case
     
-    **New Method**: Target optimization → Optimal utilization (80-90%)
+    **New Method**: Target optimization → Optimal utilization (80-90%) → Critical load case identified
     
     ### 📊 **Enhanced Visualizations:**
-    1. **XY Plan Bubble Chart**: Shows utilization efficiency across your site
-    2. **3D Utilization Categories**: Color-coded efficiency assessment  
-    3. **Load vs Utilization**: Optimization performance analysis
-    4. **Method Comparison**: Before/after optimization impact
-    5. **Efficiency Distribution**: Overall project optimization success
+    1. **🏗️ Footing Type Bubble Chart**: Performance analysis of each footing type
+    2. **🗺️ XY Plan Bubble Chart**: Shows utilization efficiency across your site
+    3. **🌐 3D Utilization Categories**: Color-coded efficiency assessment  
+    4. **📈 Load vs Utilization**: Optimization performance analysis
+    5. **⚖️ Method Comparison**: Before/after optimization impact
+    6. **📊 Efficiency Distribution**: Overall project optimization success
+    
+    ### 📋 **Enhanced Report Tables Include:**
+    - **Node coordinates and footing selection**
+    - **Critical load combination that drives the design**
+    - **Critical loads (Fz, Mx, My) for that combination**
+    - **Utilization efficiency and safety status**
+    - **Downloadable reports with critical load case analysis**
     
     ### 🎛️ **Customizable Settings:**
     - **Target Utilization**: 70-95% (default: 85%)
     - **Pile Types**: Spun Pile 600, PC I 300
-    - **Capacity Range**: 50-500 tonf
+    - **Capacity Range**: 30-500 tonf
     - **Extended Footing Range**: F3 to F20 (up to 20 piles)
     """)
     
-    # Show example of expected results
-    st.subheader("📊 Expected Optimization Results")
+    # Show example of expected results with critical load cases
+    st.subheader("📊 Expected Enhanced Results with Critical Load Cases")
     example_results = pd.DataFrame({
-        'Node': [26, 27, 28, 29],
-        'Load_Case': ['cLCB70', 'cLCB70', 'cLCB70', 'cLCB70'],
-        'FZ (tonf)': [393.73, 342.53, 284.31, 671.06],
-        'Old_Method': ['F8 (60%)', 'F7 (55%)', 'F6 (58%)', 'F12 (62%)'],
-        'New_Optimized': ['F6 (87%)', 'F5 (85%)', 'F4 (88%)', 'F9 (89%)'],
+        'Node': [789, 790, 791, 4561],
+        'Footing_Type': ['F6', 'F5', 'F4', 'F9'],
+        'Critical_Load_Combination': ['cLCB70', 'cLCB45', 'cLCB70', 'cLCB23'],
+        'Critical_Fz': [393.73, 342.53, 284.31, 671.06],
+        'Utilization': ['87%', '85%', '88%', '89%'],
         'Efficiency': ['Optimal', 'Optimal', 'Optimal', 'Optimal']
     })
     st.dataframe(example_results, use_container_width=True)
     
-    st.success("🎯 **Result**: Higher utilization efficiency with optimal material usage!")
+    st.success("🎯 **Result**: Higher utilization efficiency with critical load case identification!")
+    
+    st.info("💡 **Upload your CSV file and run the analysis to see the new footing type bubble chart and critical load case tracking!**")
