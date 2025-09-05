@@ -1033,16 +1033,31 @@ else:
     """)
     
     # Show example of expected results with critical load cases
-    st.subheader("📊 Expected Enhanced Results with Critical Load Cases")
-    example_results = pd.DataFrame({
-        'Node': [789, 790, 791, 4561],
-        'Footing_Type': ['F6', 'F5', 'F4', 'F9'],
-        'Critical_Load_Combination': ['cLCB70', 'cLCB45', 'cLCB70', 'cLCB23'],
-        'Critical_Fz': [393.73, 342.53, 284.31, 671.06],
-        'Utilization': ['87%', '85%', '88%', '89%'],
-        'Efficiency': ['Optimal', 'Optimal', 'Optimal', 'Optimal']
-    })
-    st.dataframe(example_results, use_container_width=True)
+    st.subheader("📊 Expected Enhanced Results with Foundation Site Plan")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.write("**Foundation Site Plan Features:**")
+        st.markdown("""
+        - 🏗️ **Grid Coordinates**: Construction reference grid
+        - 📍 **Footing Symbols**: F3●, F4■, F5♦, F6✚, etc.
+        - 🧭 **North Arrow**: Site orientation
+        - 📝 **Node Labels**: N789, N790, etc.
+        - 📐 **Scale**: True coordinate system
+        - 📋 **Title Block**: Drawing information
+        """)
+    
+    with col2:
+        example_results = pd.DataFrame({
+            'Node': [789, 790, 791, 4561],
+            'X': [15.2, 25.8, 35.1, 12.7],
+            'Y': [45.6, 52.3, 38.9, 61.2],
+            'Footing_Type': ['F6', 'F5', 'F4', 'F9'],
+            'Critical_Load_Combination': ['cLCB70', 'cLCB45', 'cLCB70', 'cLCB23'],
+            'Utilization': ['87%', '85%', '88%', '89%']
+        })
+        st.dataframe(example_results, use_container_width=True)
     
     st.success("🎯 **Result**: Higher utilization efficiency with critical load case identification!")
     
