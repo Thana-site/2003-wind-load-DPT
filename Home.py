@@ -579,15 +579,12 @@ def create_foundation_assignment_interface():
 
 def process_multi_foundation_analysis(df, nodes, analyzer, assignment_method, 
                                      target_utilization=0.85):
-    """Process analysis with multiple foundation types including custom"""
+    """Process analysis with multiple foundation types"""
     
     df_filtered = df[df['Node'].isin(nodes)].copy()
     
     if len(df_filtered) == 0:
         return None
-    
-    # Get all available foundations (default + custom)
-    all_foundations = {**DEFAULT_PILE_CONFIGURATIONS, **st.session_state.custom_pile_configs}
     
     all_results = []
     
@@ -598,62 +595,13 @@ def process_multi_foundation_analysis(df, nodes, analyzer, assignment_method,
         My = abs(row.get('MY (tonf·m)', row.get('My', 0)))
         
         # Determine foundation based on assignment method
-        if assignment_method == "Manual Assignment" and hasattr(st.session_state, 'temp_assignments') and node in st.session_state.temp_assignments:
+        if assignment_method == "Manual Assignment" and node in st.session_state.node_foundation_mapping:
             # Use manually assigned foundation
-            footing_type = st.session_state.temp_assignments[node]
-            if footing_type in all_foundations:
-                result = analyzer.calculate_pile_loads(Fz, Mx, My, footing_type)
-                result['assignment_method'] = 'Manual'
-            else:
-                # Fallback to optimization if foundation not found
-                allowed = st.session_state.get('allowed_foundations', list(all_foundations.keys()))
-                result = analyzer.find_optimal_footing(Fz, Mx, My, target_utilization, allowed)
-                result['assignment_method'] = 'Auto-Fallback'
-        else:
-            # Automatic optimization with allowed foundations
-            allowed = st.session_state.get('allowed_foundations', list(DEFAULT_PILE_CONFIGURATIONS.keys()))
-            # Create dictionary of allowed foundations
-            allowed_configs = {k: all_foundations[k] for k in allowed if k in all_foundations}
-            
-            results = []
-            for footing_key, footing_config in allowed_configs.items():
-                analysis = analyzer.calculate_pile_loads(Fz, Mx, My, footing_key)
-                analysis['footing_key'] = footing_key
-                analysis['target_diff'] = abs(analysis['utilization_ratio'] - target_utilization)
-                results.append(analysis)
-            
-            if results:
-                # Find optimal
-                df_results = pd.DataFrame(results)
-                safe_designs = df_results[df_results['is_safe']]
-                
-                if len(safe_designs) > 0:
-                    optimal_idx = safe_designs['target_diff'].idxmin()
-                    result = safe_designs.loc[optimal_idx].to_dict()
-                else:
-                    optimal_idx = df_results['utilization_ratio'].idxmin()
-                    result = df_results.loc[optimal_idx].to_dict()
-                
-                result['assignment_method'] = 'Auto-Optimized'
-            else:
-                # No valid foundations, use default
-                result = analyzer.calculate_pile_loads(Fz, Mx, My, 'F4')
-                result['assignment_method'] = 'Default-F4'
+            footing_type = st.session_state.node_foundation_mapping[node]
+            result = analyzer.calculate_pile_loads(Fz, Mx, My, footing_type)
+            result['assignment_method'] = 'Manual'
         
-        # Add node information
-        result['Node'] = node
-        result['Load_Case'] = row.get('Load Combination', row.get('Load Case', f'LC_{idx}'))
-        result['X'] = row.get('X', 0)
-        result['Y'] = row.get('Y', 0)
-        result['Z'] = row.get('Z', 0)
-        result['Fz'] = Fz
-        result['Mx'] = Mx
-        result['My'] = My
-        result['Target_Utilization'] = target_utilization
-        
-        all_results.append(result)
-    
-    return pd.DataFrame(all_results)state.node_foundation_mapping:
+        elif assignment_method == "Group Assignment" and node in st.session_state.node_foundation_mapping:
             # Use group-assigned foundation
             footing_type = st.session_state.node_foundation_mapping[node]
             result = analyzer.calculate_pile_loads(Fz, Mx, My, footing_type)
