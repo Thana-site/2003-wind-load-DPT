@@ -86,8 +86,12 @@ if 'foundation_groups' not in st.session_state:
     st.session_state.foundation_groups = {}
 if 'custom_foundations' not in st.session_state:
     st.session_state.custom_foundations = {}
+if 'custom_pile_configs' not in st.session_state:
+    st.session_state.custom_pile_configs = {}
 if 'override_mode' not in st.session_state:
     st.session_state.override_mode = False
+if 'load_rules' not in st.session_state:
+    st.session_state.load_rules = []
 
 # Default pile configurations
 DEFAULT_PILE_CONFIGURATIONS = {
@@ -265,7 +269,9 @@ class PileGroupAnalyzer:
         if isinstance(footing_config, dict):
             config = footing_config
         else:
-            config = DEFAULT_PILE_CONFIGURATIONS.get(footing_config, None)
+            # Get from combined configurations (default + custom)
+            all_configs = {**DEFAULT_PILE_CONFIGURATIONS, **st.session_state.custom_pile_configs}
+            config = all_configs.get(footing_config, None)
             if config is None:
                 raise ValueError(f"Unknown footing type: {footing_config}")
         
@@ -368,9 +374,12 @@ class PileGroupAnalyzer:
         if allowed_foundations is None:
             allowed_foundations = list(DEFAULT_PILE_CONFIGURATIONS.keys())
         
+        # Get all available foundations (default + custom)
+        all_configs = {**DEFAULT_PILE_CONFIGURATIONS, **st.session_state.custom_pile_configs}
+        
         results = []
         for footing_type in allowed_foundations:
-            if footing_type in DEFAULT_PILE_CONFIGURATIONS:
+            if footing_type in all_configs:
                 analysis = self.calculate_pile_loads(Fz, Mx, My, footing_type)
                 analysis['footing_key'] = footing_type
                 analysis['target_diff'] = abs(analysis['utilization_ratio'] - target_utilization)
@@ -411,11 +420,14 @@ def create_foundation_assignment_interface():
         </div>
         """, unsafe_allow_html=True)
         
+        # Get all available foundations
+        all_foundations = {**DEFAULT_PILE_CONFIGURATIONS, **st.session_state.custom_pile_configs}
+        
         # Allowed foundations for optimization
         st.markdown("#### Allowed Foundation Types")
         allowed_foundations = st.multiselect(
             "Select foundations to consider:",
-            options=list(DEFAULT_PILE_CONFIGURATIONS.keys()),
+            options=list(all_foundations.keys()),
             default=list(DEFAULT_PILE_CONFIGURATIONS.keys())
         )
         st.session_state['allowed_foundations'] = allowed_foundations
@@ -432,6 +444,8 @@ def create_foundation_assignment_interface():
         if 'temp_assignments' not in st.session_state:
             st.session_state.temp_assignments = {}
         
+        all_foundations = {**DEFAULT_PILE_CONFIGURATIONS, **st.session_state.custom_pile_configs}
+        
         col1, col2 = st.columns(2)
         
         with col1:
@@ -444,7 +458,7 @@ def create_foundation_assignment_interface():
         with col2:
             foundation_for_nodes = st.selectbox(
                 "Assign foundation type:",
-                options=list(DEFAULT_PILE_CONFIGURATIONS.keys()),
+                options=list(all_foundations.keys()),
                 key="manual_foundation"
             )
         
@@ -480,6 +494,8 @@ def create_foundation_assignment_interface():
         </div>
         """, unsafe_allow_html=True)
         
+        all_foundations = {**DEFAULT_PILE_CONFIGURATIONS, **st.session_state.custom_pile_configs}
+        
         # Create groups
         group_name = st.text_input("Group Name", "Group_1")
         
@@ -495,7 +511,7 @@ def create_foundation_assignment_interface():
         with col2:
             group_foundation = st.selectbox(
                 "Foundation for this group:",
-                options=list(DEFAULT_PILE_CONFIGURATIONS.keys()),
+                options=list(all_foundations.keys()),
                 key="group_foundation"
             )
         
@@ -539,9 +555,7 @@ def create_foundation_assignment_interface():
         
         st.markdown("#### Define Load Rules")
         
-        # Create rules
-        if 'load_rules' not in st.session_state:
-            st.session_state.load_rules = []
+        all_foundations = {**DEFAULT_PILE_CONFIGURATIONS, **st.session_state.custom_pile_configs}
         
         col1, col2, col3, col4 = st.columns(4)
         
@@ -552,7 +566,7 @@ def create_foundation_assignment_interface():
         with col3:
             rule_foundation = st.selectbox(
                 "Use foundation:",
-                options=list(DEFAULT_PILE_CONFIGURATIONS.keys()),
+                options=list(all_foundations.keys()),
                 key="rule_foundation"
             )
         with col4:
@@ -609,55 +623,18 @@ def process_multi_foundation_analysis(df, nodes, analyzer, assignment_method,
                 allowed = st.session_state.get('allowed_foundations', list(all_foundations.keys()))
                 result = analyzer.find_optimal_footing(Fz, Mx, My, target_utilization, allowed)
                 result['assignment_method'] = 'Auto-Fallback'
-        else:
-            # Automatic optimization with allowed foundations
-            allowed = st.session_state.get('allowed_foundations', list(DEFAULT_PILE_CONFIGURATIONS.keys()))
-            # Create dictionary of allowed foundations
-            allowed_configs = {k: all_foundations[k] for k in allowed if k in all_foundations}
-            
-            results = []
-            for footing_key, footing_config in allowed_configs.items():
-                analysis = analyzer.calculate_pile_loads(Fz, Mx, My, footing_key)
-                analysis['footing_key'] = footing_key
-                analysis['target_diff'] = abs(analysis['utilization_ratio'] - target_utilization)
-                results.append(analysis)
-            
-            if results:
-                # Find optimal
-                df_results = pd.DataFrame(results)
-                safe_designs = df_results[df_results['is_safe']]
-                
-                if len(safe_designs) > 0:
-                    optimal_idx = safe_designs['target_diff'].idxmin()
-                    result = safe_designs.loc[optimal_idx].to_dict()
-                else:
-                    optimal_idx = df_results['utilization_ratio'].idxmin()
-                    result = df_results.loc[optimal_idx].to_dict()
-                
-                result['assignment_method'] = 'Auto-Optimized'
-            else:
-                # No valid foundations, use default
-                result = analyzer.calculate_pile_loads(Fz, Mx, My, 'F4')
-                result['assignment_method'] = 'Default-F4'
         
-        # Add node information
-        result['Node'] = node
-        result['Load_Case'] = row.get('Load Combination', row.get('Load Case', f'LC_{idx}'))
-        result['X'] = row.get('X', 0)
-        result['Y'] = row.get('Y', 0)
-        result['Z'] = row.get('Z', 0)
-        result['Fz'] = Fz
-        result['Mx'] = Mx
-        result['My'] = My
-        result['Target_Utilization'] = target_utilization
-        
-        all_results.append(result)
-    
-    return pd.DataFrame(all_results)state.node_foundation_mapping:
+        elif assignment_method == "Group Assignment" and st.session_state.node_foundation_mapping and node in st.session_state.node_foundation_mapping:
             # Use group-assigned foundation
             footing_type = st.session_state.node_foundation_mapping[node]
-            result = analyzer.calculate_pile_loads(Fz, Mx, My, footing_type)
-            result['assignment_method'] = 'Group'
+            if footing_type in all_foundations:
+                result = analyzer.calculate_pile_loads(Fz, Mx, My, footing_type)
+                result['assignment_method'] = 'Group'
+            else:
+                # Fallback to optimization
+                allowed = st.session_state.get('allowed_foundations', list(all_foundations.keys()))
+                result = analyzer.find_optimal_footing(Fz, Mx, My, target_utilization, allowed)
+                result['assignment_method'] = 'Auto-Fallback'
         
         elif assignment_method == "Load-Based Rules" and st.session_state.load_rules:
             # Apply load-based rules
@@ -667,45 +644,50 @@ def process_multi_foundation_analysis(df, nodes, analyzer, assignment_method,
                     footing_type = rule['foundation']
                     break
             
-            if footing_type:
+            if footing_type and footing_type in all_foundations:
                 result = analyzer.calculate_pile_loads(Fz, Mx, My, footing_type)
                 result['assignment_method'] = 'Rule-Based'
             else:
-                # No rule matched, use optimization
-                result = analyzer.find_optimal_footing(
-                    Fz, Mx, My, target_utilization,
-                    st.session_state.get('allowed_foundations', None)
-                )
+                # No rule matched or foundation not found, use optimization
+                allowed = st.session_state.get('allowed_foundations', list(all_foundations.keys()))
+                result = analyzer.find_optimal_footing(Fz, Mx, My, target_utilization, allowed)
                 result['assignment_method'] = 'Auto-Optimized'
         
         else:
             # Automatic optimization
-            result = analyzer.find_optimal_footing(
-                Fz, Mx, My, target_utilization,
-                st.session_state.get('allowed_foundations', None)
-            )
-            result['assignment_method'] = 'Auto-Optimized'
+            allowed = st.session_state.get('allowed_foundations', list(all_foundations.keys()))
+            result = analyzer.find_optimal_footing(Fz, Mx, My, target_utilization, allowed)
+            if result:
+                result['assignment_method'] = 'Auto-Optimized'
+            else:
+                # Fallback to default if optimization fails
+                result = analyzer.calculate_pile_loads(Fz, Mx, My, 'F4')
+                result['assignment_method'] = 'Default-F4'
         
         # Add node information
-        result['Node'] = node
-        result['Load_Case'] = row.get('Load Combination', row.get('Load Case', f'LC_{idx}'))
-        result['X'] = row.get('X', 0)
-        result['Y'] = row.get('Y', 0)
-        result['Z'] = row.get('Z', 0)
-        result['Fz'] = Fz
-        result['Mx'] = Mx
-        result['My'] = My
-        result['Target_Utilization'] = target_utilization
-        
-        all_results.append(result)
+        if result:
+            result['Node'] = node
+            result['Load_Case'] = row.get('Load Combination', row.get('Load Case', f'LC_{idx}'))
+            result['X'] = row.get('X', 0)
+            result['Y'] = row.get('Y', 0)
+            result['Z'] = row.get('Z', 0)
+            result['Fz'] = Fz
+            result['Mx'] = Mx
+            result['My'] = My
+            result['Target_Utilization'] = target_utilization
+            
+            all_results.append(result)
     
-    return pd.DataFrame(all_results)
+    return pd.DataFrame(all_results) if all_results else None
 
 def create_foundation_summary_visualization(results_df):
     """Create visualization showing foundation distribution"""
     
     # Count foundations by type
     foundation_counts = results_df['footing_type'].value_counts()
+    
+    # Get all available foundations for colors
+    all_foundations = {**DEFAULT_PILE_CONFIGURATIONS, **st.session_state.custom_pile_configs}
     
     # Create subplots
     fig = make_subplots(
@@ -717,12 +699,13 @@ def create_foundation_summary_visualization(results_df):
     )
     
     # 1. Pie chart of foundation types
+    colors = [all_foundations.get(f, {}).get('color', '#808080') for f in foundation_counts.index]
+    
     fig.add_trace(
         go.Pie(
             labels=foundation_counts.index,
             values=foundation_counts.values,
-            marker=dict(colors=[DEFAULT_PILE_CONFIGURATIONS[f]['color'] 
-                              for f in foundation_counts.index if f in DEFAULT_PILE_CONFIGURATIONS]),
+            marker=dict(colors=colors),
             textinfo='label+percent',
             hovertemplate='%{label}: %{value} nodes<br>%{percent}'
         ),
@@ -732,7 +715,7 @@ def create_foundation_summary_visualization(results_df):
     # 2. Box plot of utilization by foundation
     for foundation in results_df['footing_type'].unique():
         data = results_df[results_df['footing_type'] == foundation]
-        color = DEFAULT_PILE_CONFIGURATIONS.get(foundation, {}).get('color', '#808080')
+        color = all_foundations.get(foundation, {}).get('color', '#808080')
         fig.add_trace(
             go.Box(
                 y=data['utilization_ratio'],
@@ -747,7 +730,7 @@ def create_foundation_summary_visualization(results_df):
     if 'X' in results_df.columns and 'Y' in results_df.columns:
         for foundation in results_df['footing_type'].unique():
             data = results_df[results_df['footing_type'] == foundation]
-            color = DEFAULT_PILE_CONFIGURATIONS.get(foundation, {}).get('color', '#808080')
+            color = all_foundations.get(foundation, {}).get('color', '#808080')
             fig.add_trace(
                 go.Scatter(
                     x=data['X'],
@@ -768,7 +751,7 @@ def create_foundation_summary_visualization(results_df):
     
     # 4. Bar chart of average utilization by foundation
     avg_utilization = results_df.groupby('footing_type')['utilization_ratio'].mean().sort_values()
-    colors = [DEFAULT_PILE_CONFIGURATIONS.get(f, {}).get('color', '#808080') for f in avg_utilization.index]
+    colors = [all_foundations.get(f, {}).get('color', '#808080') for f in avg_utilization.index]
     
     fig.add_trace(
         go.Bar(
@@ -807,10 +790,11 @@ def create_foundation_comparison_table(results_df):
     """Create comparison table of different foundations"""
     
     comparison_data = []
+    all_foundations = {**DEFAULT_PILE_CONFIGURATIONS, **st.session_state.custom_pile_configs}
     
     for foundation in results_df['footing_type'].unique():
         data = results_df[results_df['footing_type'] == foundation]
-        config = DEFAULT_PILE_CONFIGURATIONS.get(foundation, {})
+        config = all_foundations.get(foundation, {})
         
         comparison_data.append({
             'Foundation': foundation,
@@ -920,7 +904,9 @@ with tab1:
     with col1:
         st.markdown("### 📚 Available Foundations")
         
-        for ftype, config in DEFAULT_PILE_CONFIGURATIONS.items():
+        all_foundations = {**DEFAULT_PILE_CONFIGURATIONS, **st.session_state.custom_pile_configs}
+        
+        for ftype, config in all_foundations.items():
             st.markdown(f"""
             <div class="foundation-card" style="border-left-color: {config['color']}">
             <strong>{ftype}</strong>: {config['name']}<br>
@@ -1086,9 +1072,11 @@ with tab4:
         if 'X' in results.columns and 'Y' in results.columns:
             fig_map = go.Figure()
             
+            all_foundations = {**DEFAULT_PILE_CONFIGURATIONS, **st.session_state.custom_pile_configs}
+            
             for foundation in results['footing_type'].unique():
                 data = results[results['footing_type'] == foundation]
-                config = DEFAULT_PILE_CONFIGURATIONS.get(foundation, {})
+                config = all_foundations.get(foundation, {})
                 
                 fig_map.add_trace(go.Scatter(
                     x=data['X'],
