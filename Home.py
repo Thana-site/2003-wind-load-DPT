@@ -393,6 +393,10 @@ def create_foundation_assignment_interface():
     """Create interface for assigning foundations to nodes"""
     st.markdown("### 🎯 Foundation Assignment Methods")
     
+    # This function is now integrated directly in tab1
+    # Return empty since the interface is created in the main tab
+    return None
+    
     assignment_method = st.radio(
         "Choose assignment method:",
         ["Automatic Optimization", "Manual Assignment", "Group Assignment", "Load-Based Rules"]
