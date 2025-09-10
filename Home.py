@@ -138,7 +138,13 @@ class PileAnalyzer:
     def get_foundation_config(self, foundation_id):
         """Get foundation configuration from default or custom"""
         all_foundations = {**DEFAULT_FOUNDATIONS, **st.session_state.custom_foundations}
-        return all_foundations.get(foundation_id, None)
+        config = all_foundations.get(foundation_id, None)
+        
+        if config is None:
+            st.warning(f"Foundation {foundation_id} not found. Using default F4.")
+            config = DEFAULT_FOUNDATIONS.get('F4')
+        
+        return config
     
     def calculate_properties(self, foundation_id):
         """Calculate section properties for a foundation"""
@@ -146,7 +152,13 @@ class PileAnalyzer:
         if not config:
             return None
         
-        coords = np.array(config['coords']) * self.pile_spacing
+        # Get coordinates
+        coords = np.array(config.get('coords', []))
+        if len(coords) == 0:
+            st.error(f"No coordinates found for foundation {foundation_id}")
+            return None
+        
+        coords = coords * self.pile_spacing
         n_piles = len(coords)
         
         # Calculate centroid
@@ -165,9 +177,13 @@ class PileAnalyzer:
         xmax = np.max(np.abs(x_coords)) if len(x_coords) > 0 else 1.0
         ymax = np.max(np.abs(y_coords)) if len(y_coords) > 0 else 1.0
         
+        # Prevent division by zero
+        xmax = max(xmax, 0.1)
+        ymax = max(ymax, 0.1)
+        
         # Section modulus
-        Zx = Ixx / xmax if xmax > 0 else float('inf')
-        Zy = Iyy / ymax if ymax > 0 else float('inf')
+        Zx = Ixx / ymax
+        Zy = Iyy / xmax
         
         return {
             'n_piles': n_piles,
@@ -182,60 +198,67 @@ class PileAnalyzer:
     
     def calculate_pile_loads(self, Fz, Mx, My, foundation_id):
         """Calculate maximum pile load using P = Fz/n + My/Zx + Mx/Zy"""
-        props = self.calculate_properties(foundation_id)
-        if not props:
+        try:
+            props = self.calculate_properties(foundation_id)
+            if not props:
+                return None
+            
+            config = self.get_foundation_config(foundation_id)
+            
+            # Calculate stress components
+            axial_stress = abs(Fz) / props['n_piles'] if props['n_piles'] > 0 else 0
+            stress_from_My = abs(My) / props['Zx'] if props['Zx'] > 0 else 0
+            stress_from_Mx = abs(Mx) / props['Zy'] if props['Zy'] > 0 else 0
+            
+            # Maximum pile load
+            max_pile_load = axial_stress + stress_from_My + stress_from_Mx
+            min_pile_load = axial_stress - stress_from_My - stress_from_Mx
+            
+            # Utilization ratio
+            utilization = max_pile_load / self.pile_capacity if self.pile_capacity > 0 else 0
+            
+            # Category
+            if utilization > 1.0:
+                category = "Over-Capacity"
+            elif utilization > 0.95:
+                category = "Near-Capacity"
+            elif utilization > 0.80:
+                category = "Optimal"
+            elif utilization > 0.60:
+                category = "Conservative"
+            else:
+                category = "Over-Conservative"
+            
+            return {
+                'foundation_id': foundation_id,
+                'foundation_name': config.get('name', 'Unknown'),
+                'n_piles': props['n_piles'],
+                'axial_stress': axial_stress,
+                'moment_stress_mx': stress_from_Mx,
+                'moment_stress_my': stress_from_My,
+                'max_pile_load': max_pile_load,
+                'min_pile_load': min_pile_load,
+                'utilization_ratio': utilization,
+                'is_safe': utilization <= 1.0,
+                'has_tension': min_pile_load < 0,
+                'category': category,
+                'color': config.get('color', '#808080'),
+                'Ixx': props['Ixx'],
+                'Iyy': props['Iyy'],
+                'Zx': props['Zx'],
+                'Zy': props['Zy']
+            }
+        except Exception as e:
+            st.error(f"Error calculating loads for {foundation_id}: {str(e)}")
             return None
-        
-        config = self.get_foundation_config(foundation_id)
-        
-        # Calculate stress components
-        axial_stress = abs(Fz) / props['n_piles']
-        stress_from_My = abs(My) / props['Zx'] if props['Zx'] != float('inf') else 0
-        stress_from_Mx = abs(Mx) / props['Zy'] if props['Zy'] != float('inf') else 0
-        
-        # Maximum pile load
-        max_pile_load = axial_stress + stress_from_My + stress_from_Mx
-        min_pile_load = axial_stress - stress_from_My - stress_from_Mx
-        
-        # Utilization ratio
-        utilization = max_pile_load / self.pile_capacity
-        
-        # Category
-        if utilization > 1.0:
-            category = "Over-Capacity"
-        elif utilization > 0.95:
-            category = "Near-Capacity"
-        elif utilization > 0.80:
-            category = "Optimal"
-        elif utilization > 0.60:
-            category = "Conservative"
-        else:
-            category = "Over-Conservative"
-        
-        return {
-            'foundation_id': foundation_id,
-            'foundation_name': config['name'],
-            'n_piles': props['n_piles'],
-            'axial_stress': axial_stress,
-            'moment_stress_mx': stress_from_Mx,
-            'moment_stress_my': stress_from_My,
-            'max_pile_load': max_pile_load,
-            'min_pile_load': min_pile_load,
-            'utilization_ratio': utilization,
-            'is_safe': utilization <= 1.0,
-            'has_tension': min_pile_load < 0,
-            'category': category,
-            'color': config.get('color', '#808080'),
-            'Ixx': props['Ixx'],
-            'Iyy': props['Iyy'],
-            'Zx': props['Zx'],
-            'Zy': props['Zy']
-        }
     
     def optimize_foundation(self, Fz, Mx, My, target_utilization=0.85, allowed_foundations=None):
         """Find optimal foundation for given loads"""
         if allowed_foundations is None:
             allowed_foundations = list(DEFAULT_FOUNDATIONS.keys())
+        
+        if len(allowed_foundations) == 0:
+            allowed_foundations = ['F4', 'F6', 'F9']  # Default fallback
         
         results = []
         for foundation_id in allowed_foundations:
@@ -245,6 +268,10 @@ class PileAnalyzer:
                 results.append(result)
         
         if not results:
+            # Try with default F4 as last resort
+            result = self.calculate_pile_loads(Fz, Mx, My, 'F4')
+            if result:
+                return result
             return None
         
         # Sort by target difference
