@@ -87,6 +87,7 @@ DEFAULT_NODES = [
 
 
 
+
 # Footing type factors
 FOOTING_FACTORS = {
     "Footing Type": ["F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10", "F12", "F15", "F18", "F20"],
