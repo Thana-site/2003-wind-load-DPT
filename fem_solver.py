@@ -1,11 +1,11 @@
 """
-fem_solver.py - Solver for groundwater flow using FDM or FEM
+fem_solver.py - Corrected solver for groundwater flow with proper boundary conditions
 """
 
 import numpy as np
 from scipy import sparse
 from scipy.sparse.linalg import spsolve
-from scipy.interpolate import RectBivariateSpline, griddata
+from scipy.interpolate import RectBivariateSpline
 from typing import Tuple, Optional, List
 import warnings
 warnings.filterwarnings('ignore')
@@ -22,6 +22,7 @@ class GroundwaterSolver:
         self.qx = None  # Darcy velocity in x-direction
         self.qy = None  # Darcy velocity in y-direction
         self.k_field = None  # Permeability field
+        self.psi = None  # Stream function
         
     def solve(self) -> np.ndarray:
         """Solve for hydraulic head distribution"""
@@ -38,61 +39,73 @@ class GroundwaterSolver:
         qx = np.zeros((ny, nx))
         qy = np.zeros((ny, nx))
         
-        # Central differences for interior points
+        # Use central differences for interior points
         for j in range(1, ny-1):
             for i in range(1, nx-1):
-                # Horizontal gradient
-                dh_dx = (self.H[j, i+1] - self.H[j, i-1]) / (2*dx)
-                qx[j, i] = -self.k_field[j, i] * dh_dx
+                # Get local permeability
+                k_local = self.k_field[j, i]
                 
-                # Vertical gradient
+                # Calculate gradients
+                dh_dx = (self.H[j, i+1] - self.H[j, i-1]) / (2*dx)
                 dh_dy = (self.H[j+1, i] - self.H[j-1, i]) / (2*dy)
-                qy[j, i] = -self.k_field[j, i] * dh_dy
+                
+                # Darcy's law: q = -k * grad(h)
+                qx[j, i] = -k_local * dh_dx
+                qy[j, i] = -k_local * dh_dy
         
-        # Boundary points using forward/backward differences
-        self._calculate_boundary_velocities(qx, qy)
+        # Handle boundaries with one-sided differences
+        # Left boundary (i=0)
+        for j in range(1, ny-1):
+            k_local = self.k_field[j, 0]
+            qx[j, 0] = -k_local * (self.H[j, 1] - self.H[j, 0]) / dx
+            qy[j, 0] = -k_local * (self.H[j+1, 0] - self.H[j-1, 0]) / (2*dy)
+        
+        # Right boundary (i=nx-1)
+        for j in range(1, ny-1):
+            k_local = self.k_field[j, nx-1]
+            qx[j, nx-1] = -k_local * (self.H[j, nx-1] - self.H[j, nx-2]) / dx
+            qy[j, nx-1] = -k_local * (self.H[j+1, nx-1] - self.H[j-1, nx-1]) / (2*dy)
+        
+        # Top boundary (j=0)
+        for i in range(1, nx-1):
+            k_local = self.k_field[0, i]
+            qx[0, i] = -k_local * (self.H[0, i+1] - self.H[0, i-1]) / (2*dx)
+            qy[0, i] = -k_local * (self.H[1, i] - self.H[0, i]) / dy
+        
+        # Bottom boundary (j=ny-1)
+        for i in range(1, nx-1):
+            k_local = self.k_field[ny-1, i]
+            qx[ny-1, i] = -k_local * (self.H[ny-1, i+1] - self.H[ny-1, i-1]) / (2*dx)
+            qy[ny-1, i] = -k_local * (self.H[ny-1, i] - self.H[ny-2, i]) / dy
         
         self.qx = qx
         self.qy = qy
         
         return qx, qy
     
-    def _calculate_boundary_velocities(self, qx: np.ndarray, qy: np.ndarray):
-        """Calculate velocities at boundary points"""
+    def calculate_stream_function(self) -> np.ndarray:
+        """Calculate stream function from velocity field for flow line generation"""
+        if self.qx is None or self.qy is None:
+            self.calculate_velocities()
+        
         nx, ny = self.domain.nx, self.domain.ny
         dx, dy = self.domain.dx, self.domain.dy
         
-        # Left and right boundaries
-        for j in range(ny):
-            # Left boundary
-            if j > 0 and j < ny-1:
-                dh_dx = (self.H[j, 1] - self.H[j, 0]) / dx
-                qx[j, 0] = -self.k_field[j, 0] * dh_dx
-                dh_dy = (self.H[j+1, 0] - self.H[j-1, 0]) / (2*dy)
-                qy[j, 0] = -self.k_field[j, 0] * dh_dy
-            
-            # Right boundary
-            if j > 0 and j < ny-1:
-                dh_dx = (self.H[j, nx-1] - self.H[j, nx-2]) / dx
-                qx[j, nx-1] = -self.k_field[j, nx-1] * dh_dx
-                dh_dy = (self.H[j+1, nx-1] - self.H[j-1, nx-1]) / (2*dy)
-                qy[j, nx-1] = -self.k_field[j, nx-1] * dh_dy
+        # Initialize stream function
+        psi = np.zeros((ny, nx))
         
-        # Top and bottom boundaries
-        for i in range(nx):
-            # Top boundary
-            if i > 0 and i < nx-1:
-                dh_dx = (self.H[0, i+1] - self.H[0, i-1]) / (2*dx)
-                qx[0, i] = -self.k_field[0, i] * dh_dx
-            dh_dy = (self.H[1, i] - self.H[0, i]) / dy
-            qy[0, i] = -self.k_field[0, i] * dh_dy
-            
-            # Bottom boundary
-            if i > 0 and i < nx-1:
-                dh_dx = (self.H[ny-1, i+1] - self.H[ny-1, i-1]) / (2*dx)
-                qx[ny-1, i] = -self.k_field[ny-1, i] * dh_dx
-            dh_dy = (self.H[ny-1, i] - self.H[ny-2, i]) / dy
-            qy[ny-1, i] = -self.k_field[ny-1, i] * dh_dy
+        # Integrate from left boundary (reference psi=0 at bottom-left)
+        # First column: integrate vertically
+        for j in range(1, ny):
+            psi[j, 0] = psi[j-1, 0] + self.qx[j-1, 0] * dy
+        
+        # Remaining columns: integrate horizontally
+        for j in range(ny):
+            for i in range(1, nx):
+                psi[j, i] = psi[j, i-1] - self.qy[j, i-1] * dx
+        
+        self.psi = psi
+        return psi
     
     def calculate_seepage_discharge(self) -> dict:
         """Calculate seepage discharge through various boundaries"""
@@ -110,8 +123,8 @@ class GroundwaterSolver:
             iy_bottom = self.domain.depth_to_index(self.domain.excavation.depth)
             
             for i in range(ix_left + 1, ix_right):
-                if iy_bottom < self.domain.ny:
-                    # Upward flow into excavation (negative qy = upward)
+                if iy_bottom < self.domain.ny - 1:
+                    # Upward flow into excavation (negative qy = upward in our coordinate system)
                     Q_bottom += -self.qy[iy_bottom, i] * dx
             
             results['excavation_bottom'] = Q_bottom
@@ -150,14 +163,14 @@ class GroundwaterSolver:
         dy = self.domain.dy
         
         # Exit gradients near sheet pile toes
-        for pile in self.domain.sheet_piles:
+        for pile_idx, pile in enumerate(self.domain.sheet_piles):
             ix = self.domain.x_to_index(pile.x_position)
             iy_toe = self.domain.depth_to_index(pile.bottom_depth)
             
             # Calculate gradient just downstream of pile toe
             if ix + 2 < self.domain.nx and iy_toe > 0 and iy_toe < self.domain.ny - 1:
                 dh_dy = abs((self.H[iy_toe+1, ix+2] - self.H[iy_toe-1, ix+2]) / (2*dy))
-                gradients[f'pile_toe_x{pile.x_position:.1f}'] = dh_dy
+                gradients[f'pile_{pile_idx+1}_toe'] = dh_dy
         
         # Gradient at excavation center if present
         if self.domain.excavation:
@@ -184,16 +197,27 @@ class GroundwaterSolver:
 
 
 class FDMSolver(GroundwaterSolver):
-    """Finite Difference Method solver for groundwater flow"""
+    """Corrected Finite Difference Method solver with proper boundary conditions"""
     
     def __init__(self, domain: Domain):
         super().__init__(domain)
         self.k_field = domain.create_permeability_field()
-    
+        
     def solve(self) -> np.ndarray:
-        """Solve using finite differences"""
+        """Solve using finite differences with corrected boundary conditions"""
         nx, ny = self.domain.nx, self.domain.ny
         dx, dy = self.domain.dx, self.domain.dy
+        
+        # Create a mask for sheet pile locations
+        sheet_pile_mask = np.ones((ny, nx), dtype=bool)
+        for pile in self.domain.sheet_piles:
+            ix = self.domain.x_to_index(pile.x_position)
+            iy_top = self.domain.depth_to_index(pile.top_depth)
+            iy_bottom = self.domain.depth_to_index(pile.bottom_depth)
+            
+            # Mark sheet pile cells
+            for j in range(iy_top, min(iy_bottom + 1, ny)):
+                sheet_pile_mask[j, ix] = False
         
         # Total number of unknowns
         N = nx * ny
@@ -206,39 +230,40 @@ class FDMSolver(GroundwaterSolver):
         def global_index(i, j):
             return j * nx + i
         
-        # Helper function for harmonic mean
+        # Helper function for harmonic mean (for interface permeability)
         def harmonic_mean(k1, k2):
-            return 2.0 * k1 * k2 / (k1 + k2 + 1e-20)
+            if k1 <= 0 or k2 <= 0:
+                return 0
+            return 2.0 * k1 * k2 / (k1 + k2)
         
         # Assemble system of equations
         for j in range(ny):
             for i in range(nx):
                 p = global_index(i, j)
                 
-                # Get boundary conditions
+                # Get coordinates
                 x = self.domain.x_coords[i]
                 y = self.domain.y_coords[j]
                 
-                # Check if inside excavation
-                is_inside_excav = (self.domain.excavation and 
-                                 self.domain.excavation.is_inside(x, y))
+                # Check if this is a sheet pile cell
+                is_sheet_pile = not sheet_pile_mask[j, i]
                 
-                # === Boundary Conditions ===
+                # === BOUNDARY CONDITIONS ===
                 
-                # Left boundary
+                # Left boundary: constant head
                 if i == 0:
                     rows.append(p)
                     cols.append(p)
                     data.append(1.0)
-                    b[p] = self.domain.get_boundary_head(x, y, 'left')
+                    b[p] = -self.domain.water_level_left  # Convert depth to head
                     continue
                 
-                # Right boundary
+                # Right boundary: constant head
                 if i == nx - 1:
                     rows.append(p)
                     cols.append(p)
                     data.append(1.0)
-                    b[p] = self.domain.get_boundary_head(x, y, 'right')
+                    b[p] = -self.domain.water_level_right  # Convert depth to head
                     continue
                 
                 # Top boundary
@@ -246,69 +271,150 @@ class FDMSolver(GroundwaterSolver):
                     rows.append(p)
                     cols.append(p)
                     data.append(1.0)
-                    b[p] = self.domain.get_boundary_head(x, y, 'top')
+                    # Check if inside excavation
+                    if self.domain.excavation and self.domain.excavation.is_inside(x, 0):
+                        # Inside excavation - set to excavation water level
+                        if self.domain.excavation.water_level is not None:
+                            b[p] = -self.domain.excavation.water_level
+                        else:
+                            b[p] = -self.domain.excavation.depth  # Dry excavation
+                    else:
+                        # Outside excavation - natural water table
+                        b[p] = -self.domain.water_level_left
                     continue
                 
-                # Bottom boundary (no-flow)
+                # Bottom boundary: no-flow (Neumann)
                 if j == ny - 1:
-                    bc = self.domain.boundary_conditions.get('bottom')
-                    if bc and bc.type == 'neumann':
-                        # No-flow: dh/dy = 0
+                    # No-flow: dh/dy = 0, so h[j] = h[j-1]
+                    rows.append(p)
+                    cols.append(p)
+                    data.append(1.0)
+                    rows.append(p)
+                    cols.append(global_index(i, j-1))
+                    data.append(-1.0)
+                    b[p] = 0.0
+                    continue
+                
+                # === SHEET PILE TREATMENT ===
+                if is_sheet_pile:
+                    # Sheet pile cell - use very low permeability
+                    # This effectively creates a no-flow barrier
+                    k_pile = 1e-12
+                    
+                    # Get neighboring permeabilities (use pile permeability)
+                    k_east = k_pile if i < nx-1 else 0
+                    k_west = k_pile if i > 0 else 0
+                    k_north = k_pile if j > 0 else 0
+                    k_south = k_pile if j < ny-1 else 0
+                    
+                    # Finite difference coefficients
+                    a_east = k_east / dx**2
+                    a_west = k_west / dx**2
+                    a_north = k_north / dy**2
+                    a_south = k_south / dy**2
+                    a_center = -(a_east + a_west + a_north + a_south)
+                    
+                    if abs(a_center) < 1e-15:
+                        # Isolated cell - set to average of neighbors
                         rows.append(p)
                         cols.append(p)
                         data.append(1.0)
-                        rows.append(p)
-                        cols.append(global_index(i, j-1))
-                        data.append(-1.0)
                         b[p] = 0.0
                     else:
-                        # Dirichlet
+                        # Standard finite difference stencil
                         rows.append(p)
                         cols.append(p)
-                        data.append(1.0)
-                        b[p] = self.domain.get_boundary_head(x, y, 'bottom')
+                        data.append(a_center)
+                        
+                        if i < nx-1:
+                            rows.append(p)
+                            cols.append(global_index(i+1, j))
+                            data.append(a_east)
+                        
+                        if i > 0:
+                            rows.append(p)
+                            cols.append(global_index(i-1, j))
+                            data.append(a_west)
+                        
+                        if j > 0:
+                            rows.append(p)
+                            cols.append(global_index(i, j-1))
+                            data.append(a_north)
+                        
+                        if j < ny-1:
+                            rows.append(p)
+                            cols.append(global_index(i, j+1))
+                            data.append(a_south)
+                    
                     continue
                 
-                # === Interior Points ===
+                # === INTERIOR POINTS ===
                 
-                # Interface permeabilities (harmonic mean)
-                k_east = harmonic_mean(self.k_field[j, i], 
-                                      self.k_field[j, min(i+1, nx-1)])
-                k_west = harmonic_mean(self.k_field[j, i], 
-                                      self.k_field[j, max(i-1, 0)])
-                k_north = harmonic_mean(self.k_field[j, i], 
-                                       self.k_field[max(j-1, 0), i])
-                k_south = harmonic_mean(self.k_field[j, i], 
-                                       self.k_field[min(j+1, ny-1), i])
+                # Get permeabilities at interfaces (harmonic mean for heterogeneous media)
+                k_center = self.k_field[j, i]
+                
+                # Interface permeabilities
+                if i < nx-1:
+                    k_east = harmonic_mean(k_center, self.k_field[j, i+1])
+                else:
+                    k_east = k_center
+                
+                if i > 0:
+                    k_west = harmonic_mean(k_center, self.k_field[j, i-1])
+                else:
+                    k_west = k_center
+                
+                if j > 0:
+                    k_north = harmonic_mean(k_center, self.k_field[j-1, i])
+                else:
+                    k_north = k_center
+                
+                if j < ny-1:
+                    k_south = harmonic_mean(k_center, self.k_field[j+1, i])
+                else:
+                    k_south = k_center
+                
+                # Check for sheet pile neighbors and set zero flux
+                if i < nx-1 and not sheet_pile_mask[j, i+1]:
+                    k_east = 0  # No flow through sheet pile
+                if i > 0 and not sheet_pile_mask[j, i-1]:
+                    k_west = 0  # No flow through sheet pile
+                if j > 0 and not sheet_pile_mask[j-1, i]:
+                    k_north = 0  # No flow through sheet pile
+                if j < ny-1 and not sheet_pile_mask[j+1, i]:
+                    k_south = 0  # No flow through sheet pile
                 
                 # Finite difference coefficients
                 a_east = k_east / dx**2
                 a_west = k_west / dx**2
                 a_north = k_north / dy**2
                 a_south = k_south / dy**2
-                a_center = a_east + a_west + a_north + a_south
+                a_center = -(a_east + a_west + a_north + a_south)
                 
                 # Assemble matrix
                 rows.append(p)
                 cols.append(p)
                 data.append(a_center)
                 
-                # Neighbors
-                rows.append(p)
-                cols.append(global_index(min(i+1, nx-1), j))
-                data.append(-a_east)
+                if i < nx-1 and a_east > 0:
+                    rows.append(p)
+                    cols.append(global_index(i+1, j))
+                    data.append(a_east)
                 
-                rows.append(p)
-                cols.append(global_index(max(i-1, 0), j))
-                data.append(-a_west)
+                if i > 0 and a_west > 0:
+                    rows.append(p)
+                    cols.append(global_index(i-1, j))
+                    data.append(a_west)
                 
-                rows.append(p)
-                cols.append(global_index(i, max(j-1, 0)))
-                data.append(-a_north)
+                if j > 0 and a_north > 0:
+                    rows.append(p)
+                    cols.append(global_index(i, j-1))
+                    data.append(a_north)
                 
-                rows.append(p)
-                cols.append(global_index(i, min(j+1, ny-1)))
-                data.append(-a_south)
+                if j < ny-1 and a_south > 0:
+                    rows.append(p)
+                    cols.append(global_index(i, j+1))
+                    data.append(a_south)
         
         # Solve sparse linear system
         A = sparse.csr_matrix((data, (rows, cols)), shape=(N, N))
@@ -317,146 +423,50 @@ class FDMSolver(GroundwaterSolver):
         
         return self.H
     
-    def generate_streamlines(self, num_lines: int = 10) -> List[Tuple[np.ndarray, np.ndarray]]:
-        """Generate streamlines for flow visualization with proper physics"""
-        if self.qx is None or self.qy is None:
-            self.calculate_velocities()
+    def generate_flow_lines_from_stream_function(self, num_lines: int = 10) -> List[Tuple[np.ndarray, np.ndarray]]:
+        """Generate flow lines as contours of the stream function"""
+        if self.psi is None:
+            self.calculate_stream_function()
         
-        streamlines = []
+        # Get stream function range
+        psi_min = np.min(self.psi)
+        psi_max = np.max(self.psi)
         
-        # Create interpolation functions with higher order for smoother streamlines
-        x_interp = self.domain.x_coords
-        y_interp = self.domain.y_coords
+        # Generate evenly spaced stream function values
+        psi_levels = np.linspace(psi_min, psi_max, num_lines + 2)[1:-1]
         
-        qx_interp = RectBivariateSpline(y_interp, x_interp, self.qx, kx=3, ky=3)
-        qy_interp = RectBivariateSpline(y_interp, x_interp, self.qy, kx=3, ky=3)
+        flow_lines = []
         
-        # Determine starting points based on flow pattern
-        # For sheet pile problems, streamlines should start from upstream boundary
-        # and from different depths to show the flow pattern around obstacles
+        # Extract contours using matplotlib's contour function
+        import matplotlib.pyplot as plt
+        X, Y = np.meshgrid(self.domain.x_coords, self.domain.y_coords)
         
-        # Calculate effective flow zones
-        if self.domain.sheet_piles:
-            # Get leftmost sheet pile position
-            left_pile_x = min(pile.x_position for pile in self.domain.sheet_piles)
-            
-            # Start streamlines from left boundary at various depths
-            # Some above sheet pile bottom, some below
-            pile_bottom = max(pile.bottom_depth for pile in self.domain.sheet_piles)
-            
-            # Create varied starting points
-            start_points = []
-            
-            # Lines above pile bottom (will flow around)
-            for i in range(num_lines // 2):
-                depth = 0.5 + i * (pile_bottom - 0.5) / (num_lines // 2)
-                start_points.append((0.5, depth))
-            
-            # Lines below pile bottom (will flow under)
-            for i in range(num_lines - num_lines // 2):
-                depth = pile_bottom + 0.5 + i * (self.domain.depth - pile_bottom - 1) / (num_lines - num_lines // 2)
-                if depth < self.domain.depth - 0.5:
-                    start_points.append((0.5, depth))
-        else:
-            # No sheet piles - uniform distribution
-            start_depths = np.linspace(1.0, self.domain.depth - 1.0, num_lines)
-            start_points = [(0.5, depth) for depth in start_depths]
+        # Create contour plot (without displaying)
+        fig, ax = plt.subplots(figsize=(1, 1))
+        cs = ax.contour(X, Y, self.psi, levels=psi_levels)
+        plt.close(fig)
         
-        # Generate streamlines from starting points
-        for x_start, y_start in start_points:
-            x_current = x_start
-            y_current = y_start
-            
-            stream_x = [x_current]
-            stream_y = [y_current]
-            
-            # Adaptive integration parameters
-            dt = 0.05  # Smaller time step for accuracy
-            max_steps = int(self.domain.width / dt * 3)
-            
-            for step in range(max_steps):
-                # Check boundaries
-                if (x_current >= self.domain.width - 0.2 or x_current <= 0.2 or
-                    y_current >= self.domain.depth - 0.2 or y_current <= 0.2):
-                    break
-                
-                # Get velocities with error handling
-                try:
-                    vx = float(qx_interp(y_current, x_current)[0, 0])
-                    vy = float(qy_interp(y_current, x_current)[0, 0])
-                except:
-                    break
-                
-                # Check for stagnation or very low velocity
-                v_mag = np.sqrt(vx**2 + vy**2)
-                if v_mag < 1e-12:
-                    break
-                
-                # Use RK2 (midpoint method) for better accuracy
-                # First half step
-                vx_norm = vx / v_mag
-                vy_norm = vy / v_mag
-                
-                x_mid = x_current + 0.5 * vx_norm * dt
-                y_mid = y_current + 0.5 * vy_norm * dt
-                
-                # Velocity at midpoint
-                try:
-                    vx_mid = float(qx_interp(y_mid, x_mid)[0, 0])
-                    vy_mid = float(qy_interp(y_mid, x_mid)[0, 0])
-                    v_mag_mid = np.sqrt(vx_mid**2 + vy_mid**2)
-                    
-                    if v_mag_mid > 1e-12:
-                        vx_mid_norm = vx_mid / v_mag_mid
-                        vy_mid_norm = vy_mid / v_mag_mid
-                    else:
-                        vx_mid_norm, vy_mid_norm = vx_norm, vy_norm
-                except:
-                    vx_mid_norm, vy_mid_norm = vx_norm, vy_norm
-                
-                # Full step using midpoint velocity
-                x_new = x_current + vx_mid_norm * dt
-                y_new = y_current + vy_mid_norm * dt
-                
-                # Check if we hit a sheet pile or excavation boundary
-                hit_obstacle = False
-                for pile in self.domain.sheet_piles:
-                    if (abs(x_new - pile.x_position) < pile.thickness and 
-                        pile.top_depth <= y_new <= pile.bottom_depth):
-                        hit_obstacle = True
-                        break
-                
-                if hit_obstacle:
-                    break
-                
-                stream_x.append(x_new)
-                stream_y.append(y_new)
-                
-                x_current = x_new
-                y_current = y_new
-            
-            if len(stream_x) > 10:  # Keep streamlines with sufficient points
-                streamlines.append((np.array(stream_x), np.array(stream_y)))
+        # Extract contour lines
+        for collection in cs.collections:
+            for path in collection.get_paths():
+                vertices = path.vertices
+                if len(vertices) > 10:  # Only keep meaningful lines
+                    flow_lines.append((vertices[:, 0], vertices[:, 1]))
         
-        return streamlines
+        return flow_lines
     
-    def generate_equipotentials(self, num_lines: int = 15) -> List[float]:
-        """Generate appropriate equipotential levels based on head distribution"""
+    def generate_equipotentials(self, num_lines: int = 15) -> np.ndarray:
+        """Generate equipotential levels with proper spacing"""
         if self.H is None:
             raise ValueError("Must solve for heads first")
         
-        # Get head range excluding boundary effects
-        # Focus on the active flow region
-        h_interior = self.H[5:-5, 5:-5]  # Exclude near-boundary cells
-        h_min = np.min(h_interior)
-        h_max = np.max(h_interior)
+        # Get head range from the active flow region (exclude boundaries)
+        # This helps avoid clustering near constant head boundaries
+        h_active = self.H[5:-5, 5:-5]
+        h_min = np.percentile(h_active, 5)
+        h_max = np.percentile(h_active, 95)
         
-        # Generate equipotential levels with proper spacing
-        # Use slightly wider range to capture boundary heads
-        h_min_plot = np.min(self.H)
-        h_max_plot = np.max(self.H)
-        
-        # Create levels with emphasis on the active flow region
-        levels = np.linspace(h_min_plot, h_max_plot, num_lines)
+        # Generate evenly spaced levels
+        levels = np.linspace(h_min, h_max, num_lines)
         
         return levels
