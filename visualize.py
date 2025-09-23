@@ -28,7 +28,7 @@ class FlowNetVisualizer:
                       show_mesh: bool = False,
                       show_velocity_vectors: bool = True,
                       figsize: Tuple[float, float] = (14, 10)) -> plt.Figure:
-        """Create comprehensive flow net visualization"""
+        """Create comprehensive flow net visualization with physically correct patterns"""
         
         # Prepare data
         X, Y = np.meshgrid(self.domain.x_coords, -self.domain.y_coords)  # Negative for depth
@@ -39,17 +39,40 @@ class FlowNetVisualizer:
         ax = fig.add_subplot(111)
         
         # Plot hydraulic head contours (equipotentials)
-        h_min, h_max = np.min(H), np.max(H)
-        levels = np.linspace(h_min, h_max, num_equipotentials)
+        # Generate proper equipotential levels
+        if hasattr(self.solver, 'generate_equipotentials'):
+            levels = self.solver.generate_equipotentials(num_equipotentials)
+        else:
+            h_min, h_max = np.min(H), np.max(H)
+            levels = np.linspace(h_min, h_max, num_equipotentials)
         
+        # Draw equipotentials with better styling
         cs = ax.contour(X, Y, H, levels=levels, colors='blue', 
                        linewidths=1.5, alpha=0.8)
         ax.clabel(cs, inline=True, fontsize=8, fmt='%.2f')
         
-        # Plot streamlines
+        # Plot streamlines with improved generation
         streamlines = self.solver.generate_streamlines(num_streamlines)
-        for stream_x, stream_y in streamlines:
-            ax.plot(stream_x, -stream_y, 'r-', linewidth=1.5, alpha=0.7)
+        
+        # Use varied colors for better visualization
+        stream_colors = plt.cm.Reds(np.linspace(0.3, 0.8, len(streamlines)))
+        
+        for idx, (stream_x, stream_y) in enumerate(streamlines):
+            ax.plot(stream_x, -stream_y, color=stream_colors[idx], 
+                   linewidth=1.5, alpha=0.7)
+        
+        # Add flow direction arrows on streamlines
+        for stream_x, stream_y in streamlines[::2]:  # Every other streamline for clarity
+            if len(stream_x) > 20:
+                # Add arrows at several points along the streamline
+                arrow_indices = np.linspace(10, len(stream_x)-10, 3, dtype=int)
+                for i in arrow_indices:
+                    if i < len(stream_x) - 1:
+                        dx = stream_x[i+1] - stream_x[i]
+                        dy = -(stream_y[i+1] - stream_y[i])
+                        ax.arrow(stream_x[i], -stream_y[i], dx*0.5, dy*0.5,
+                                head_width=0.3, head_length=0.2, 
+                                fc='red', ec='red', alpha=0.6)
         
         # Plot velocity vectors if requested
         if show_velocity_vectors:
@@ -61,20 +84,20 @@ class FlowNetVisualizer:
         # Customize plot
         ax.set_xlabel('Horizontal Distance (m)', fontsize=12)
         ax.set_ylabel('Depth Below Surface (m)', fontsize=12)
-        ax.set_title('Flow Net Analysis\nBlue: Equipotentials | Red: Flow Lines', 
+        ax.set_title('Flow Net Analysis\nBlue: Equipotentials | Red: Flow Lines with Direction', 
                     fontsize=14, fontweight='bold')
         ax.grid(True, alpha=0.3)
         ax.set_xlim(0, self.domain.width)
         ax.set_ylim(-self.domain.depth, 0)
         
-        # Add legend
+        # Add legend with better elements
         legend_elements = [
-            plt.Line2D([0], [0], color='blue', label='Equipotentials'),
-            plt.Line2D([0], [0], color='red', label='Flow lines'),
+            plt.Line2D([0], [0], color='blue', label='Equipotentials (constant head)'),
+            plt.Line2D([0], [0], color='red', label='Flow lines (flow direction)'),
             plt.Rectangle((0, 0), 1, 1, fc='black', label='Sheet piles'),
             plt.Rectangle((0, 0), 1, 1, fc='lightgray', alpha=0.5, label='Excavation')
         ]
-        ax.legend(handles=legend_elements, loc='best')
+        ax.legend(handles=legend_elements, loc='best', fontsize=10)
         
         plt.tight_layout()
         return fig
