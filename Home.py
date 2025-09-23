@@ -55,9 +55,9 @@ def initialize_session_state():
         st.session_state.results = None
     if 'soil_layers' not in st.session_state:
         st.session_state.soil_layers = [
-            {"name": "Sand", "depth_top": 0, "depth_bottom": 5, 
+            {"name": "Sand", "depth_top": 0.0, "depth_bottom": 5.0, 
              "hydraulic_conductivity": 1e-5, "porosity": 0.3},
-            {"name": "Clay", "depth_top": 5, "depth_bottom": 15, 
+            {"name": "Clay", "depth_top": 5.0, "depth_bottom": 15.0, 
              "hydraulic_conductivity": 1e-6, "porosity": 0.4}
         ]
     if 'last_run_params' not in st.session_state:
@@ -138,7 +138,7 @@ def create_sidebar():
         )
         
         soil_layers = []
-        previous_bottom = 0
+        previous_bottom = 0.0
         
         for i in range(num_layers):
             st.write(f"**Layer {i+1}**")
@@ -163,7 +163,7 @@ def create_sidebar():
                     f"Bottom (m)", 
                     min_value=depth_top + 0.5, 
                     max_value=domain_depth,
-                    value=min(st.session_state.soil_layers[i]["depth_bottom"] if i < len(st.session_state.soil_layers) else depth_top + 5, domain_depth),
+                    value=float(min(st.session_state.soil_layers[i]["depth_bottom"] if i < len(st.session_state.soil_layers) else depth_top + 5, domain_depth)),
                     step=0.5, key=f"layer_bottom_{i}"
                 )
                 porosity = st.number_input(
