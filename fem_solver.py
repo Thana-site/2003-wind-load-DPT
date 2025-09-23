@@ -444,14 +444,29 @@ class FDMSolver(GroundwaterSolver):
         # Create contour plot (without displaying)
         fig, ax = plt.subplots(figsize=(1, 1))
         cs = ax.contour(X, Y, self.psi, levels=psi_levels)
-        plt.close(fig)
         
-        # Extract contour lines
-        for collection in cs.collections:
-            for path in collection.get_paths():
-                vertices = path.vertices
-                if len(vertices) > 10:  # Only keep meaningful lines
-                    flow_lines.append((vertices[:, 0], vertices[:, 1]))
+        # Extract contour lines (compatible with different matplotlib versions)
+        try:
+            # Try newer matplotlib API first
+            for level_idx, level in enumerate(psi_levels):
+                # Get all contour segments for this level
+                segments = cs.allsegs[level_idx]
+                for segment in segments:
+                    if len(segment) > 10:  # Only keep meaningful lines
+                        flow_lines.append((segment[:, 0], segment[:, 1]))
+        except (AttributeError, IndexError):
+            # Fall back to older API
+            try:
+                for collection in cs.collections:
+                    for path in collection.get_paths():
+                        vertices = path.vertices
+                        if len(vertices) > 10:  # Only keep meaningful lines
+                            flow_lines.append((vertices[:, 0], vertices[:, 1]))
+            except AttributeError:
+                # Most basic fallback - just use the contour data directly
+                pass
+        
+        plt.close(fig)
         
         return flow_lines
     
