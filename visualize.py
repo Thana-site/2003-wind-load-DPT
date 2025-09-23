@@ -67,24 +67,52 @@ class FlowNetVisualizer:
         
         # Add flow direction arrows
         if num_flow_lines > 0:
+            # Get collections (handle different matplotlib versions)
+            try:
+                collections = cs_flow.collections
+            except AttributeError:
+                # For newer matplotlib versions
+                collections = cs_flow.allsegs
+                
             # Add arrows along some flow lines
-            for collection in cs_flow.collections[::2]:  # Every other flow line
-                for path in collection.get_paths():
-                    vertices = path.vertices
-                    if len(vertices) > 20:
-                        # Add arrows at a few points
-                        indices = np.linspace(10, len(vertices)-10, 3, dtype=int)
-                        for idx in indices:
-                            if idx < len(vertices) - 1:
-                                x1, y1 = vertices[idx]
-                                x2, y2 = vertices[idx + 1]
-                                dx = x2 - x1
-                                dy = y2 - y1
-                                if abs(dx) + abs(dy) > 0.01:  # Skip if too small
-                                    ax.arrow(x1, y1, dx*0.3, dy*0.3,
-                                           head_width=0.4, head_length=0.3,
-                                           fc='darkred', ec='darkred', 
-                                           alpha=0.7, zorder=5)
+            if isinstance(collections[0], list):
+                # Handle allsegs format (list of lists)
+                for i in range(0, len(collections), 2):  # Every other level
+                    if i < len(collections):
+                        for segment in collections[i]:
+                            if len(segment) > 20:
+                                # Add arrows at a few points
+                                indices = np.linspace(10, len(segment)-10, 3, dtype=int)
+                                for idx in indices:
+                                    if idx < len(segment) - 1:
+                                        x1, y1 = segment[idx]
+                                        x2, y2 = segment[idx + 1]
+                                        dx = x2 - x1
+                                        dy = y2 - y1
+                                        if abs(dx) + abs(dy) > 0.01:  # Skip if too small
+                                            ax.arrow(x1, y1, dx*0.3, dy*0.3,
+                                                   head_width=0.4, head_length=0.3,
+                                                   fc='darkred', ec='darkred', 
+                                                   alpha=0.7, zorder=5)
+            else:
+                # Handle collections format
+                for collection in collections[::2]:  # Every other flow line
+                    for path in collection.get_paths():
+                        vertices = path.vertices
+                        if len(vertices) > 20:
+                            # Add arrows at a few points
+                            indices = np.linspace(10, len(vertices)-10, 3, dtype=int)
+                            for idx in indices:
+                                if idx < len(vertices) - 1:
+                                    x1, y1 = vertices[idx]
+                                    x2, y2 = vertices[idx + 1]
+                                    dx = x2 - x1
+                                    dy = y2 - y1
+                                    if abs(dx) + abs(dy) > 0.01:  # Skip if too small
+                                        ax.arrow(x1, y1, dx*0.3, dy*0.3,
+                                               head_width=0.4, head_length=0.3,
+                                               fc='darkred', ec='darkred', 
+                                               alpha=0.7, zorder=5)
         
         # === ADD GEOMETRY ===
         self._add_enhanced_geometry(ax)
