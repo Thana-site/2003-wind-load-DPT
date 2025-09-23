@@ -159,11 +159,20 @@ def create_sidebar():
             
             with col2:
                 depth_top = previous_bottom
+                # Calculate default value ensuring it's within bounds
+                if i < len(st.session_state.soil_layers):
+                    default_bottom = st.session_state.soil_layers[i]["depth_bottom"]
+                else:
+                    default_bottom = depth_top + 5.0
+                
+                # Ensure value is within min/max bounds
+                default_bottom = max(depth_top + 0.5, min(default_bottom, domain_depth))
+                
                 depth_bottom = st.number_input(
                     f"Bottom (m)", 
                     min_value=depth_top + 0.5, 
                     max_value=domain_depth,
-                    value=float(min(st.session_state.soil_layers[i]["depth_bottom"] if i < len(st.session_state.soil_layers) else depth_top + 5, domain_depth)),
+                    value=float(default_bottom),
                     step=0.5, key=f"layer_bottom_{i}"
                 )
                 porosity = st.number_input(
