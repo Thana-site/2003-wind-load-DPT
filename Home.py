@@ -270,7 +270,7 @@ def run_analysis(params):
     try:
         # Step 1: Create domain
         status_text.text("Creating domain geometry...")
-        progress_bar.progress(20)
+        progress_bar.progress(15)
         
         domain = create_cofferdam_domain(
             sheet_pile_length=params['sheet_pile_length'],
@@ -290,7 +290,7 @@ def run_analysis(params):
         
         # Step 2: Validate domain
         status_text.text("Validating configuration...")
-        progress_bar.progress(30)
+        progress_bar.progress(25)
         
         warnings = domain.validate()
         if warnings:
@@ -298,21 +298,27 @@ def run_analysis(params):
                 st.warning(warning)
         
         # Step 3: Create and run solver
-        status_text.text("Solving groundwater flow equations...")
-        progress_bar.progress(50)
+        status_text.text("Solving Laplace equation for seepage...")
+        progress_bar.progress(40)
         
-        # Currently only FDM is implemented
+        # Use corrected FDM solver
         solver = FDMSolver(domain)
         H = solver.solve()
         
         # Step 4: Calculate velocities
-        status_text.text("Calculating seepage velocities...")
-        progress_bar.progress(70)
+        status_text.text("Computing Darcy velocities...")
+        progress_bar.progress(60)
         
         qx, qy = solver.calculate_velocities()
         
-        # Step 5: Calculate results
-        status_text.text("Computing results...")
+        # Step 5: Calculate stream function for flow lines
+        status_text.text("Calculating stream function...")
+        progress_bar.progress(75)
+        
+        psi = solver.calculate_stream_function()
+        
+        # Step 6: Calculate results
+        status_text.text("Computing seepage quantities and gradients...")
         progress_bar.progress(90)
         
         seepage = solver.calculate_seepage_discharge()
@@ -320,7 +326,7 @@ def run_analysis(params):
         
         # Complete
         progress_bar.progress(100)
-        status_text.text("Analysis complete!")
+        status_text.text("Analysis complete! ✓")
         
         # Store results in session state
         st.session_state.domain = domain
@@ -330,11 +336,14 @@ def run_analysis(params):
             'gradients': gradients,
             'H': H,
             'qx': qx,
-            'qy': qy
+            'qy': qy,
+            'psi': psi
         }
         st.session_state.last_run_params = params
         
-        # Clear progress indicators
+        # Clear progress indicators after short delay
+        import time
+        time.sleep(0.5)
         progress_bar.empty()
         status_text.empty()
         
@@ -344,6 +353,8 @@ def run_analysis(params):
         progress_bar.empty()
         status_text.empty()
         st.error(f"Analysis failed: {str(e)}")
+        import traceback
+        st.code(traceback.format_exc())
         return False
 
 
@@ -406,27 +417,36 @@ def display_results():
         st.pyplot(viz.plot_summary_dashboard(figsize=(16, 10)))
     
     with tab2:
-        st.subheader("Flow Net Visualization")
+        st.subheader("Flow Net Visualization (Orthogonal Pattern)")
         
         col1, col2 = st.columns([3, 1])
         
         with col2:
             st.write("**Visualization Options**")
             num_equipotentials = st.slider(
-                "Equipotentials", 
-                min_value=5, max_value=30, value=15, step=1
+                "Equipotential Lines", 
+                min_value=5, max_value=30, value=15, step=1,
+                help="Number of constant head contours"
             )
-            num_streamlines = st.slider(
+            num_flow_lines = st.slider(
                 "Flow Lines", 
-                min_value=3, max_value=20, value=10, step=1
+                min_value=5, max_value=25, value=12, step=1,
+                help="Number of stream function contours"
             )
-            show_vectors = st.checkbox("Show Velocity Vectors", value=True)
-            show_mesh = st.checkbox("Show Mesh", value=False)
+            show_vectors = st.checkbox("Show Velocity Vectors", value=False,
+                                      help="Overlay velocity arrows")
+            show_mesh = st.checkbox("Show Grid", value=False,
+                                  help="Display computational mesh")
+            
+            st.divider()
+            st.info("The flow net shows orthogonal pattern with:\n"
+                   "• Blue: Equipotentials (const. head)\n"
+                   "• Red: Flow lines (streamlines)")
         
         with col1:
             fig = viz.plot_flow_net(
                 num_equipotentials=num_equipotentials,
-                num_streamlines=num_streamlines,
+                num_flow_lines=num_flow_lines,
                 show_velocity_vectors=show_vectors,
                 show_mesh=show_mesh,
                 figsize=(12, 8)
