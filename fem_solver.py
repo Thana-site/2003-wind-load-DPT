@@ -318,62 +318,116 @@ class FDMSolver(GroundwaterSolver):
         return self.H
     
     def generate_streamlines(self, num_lines: int = 10) -> List[Tuple[np.ndarray, np.ndarray]]:
-        """Generate streamlines for flow visualization"""
+        """Generate streamlines for flow visualization with proper physics"""
         if self.qx is None or self.qy is None:
             self.calculate_velocities()
         
         streamlines = []
         
-        # Create interpolation functions
+        # Create interpolation functions with higher order for smoother streamlines
         x_interp = self.domain.x_coords
         y_interp = self.domain.y_coords
         
-        qx_interp = RectBivariateSpline(y_interp, x_interp, self.qx, kx=1, ky=1)
-        qy_interp = RectBivariateSpline(y_interp, x_interp, self.qy, kx=1, ky=1)
+        qx_interp = RectBivariateSpline(y_interp, x_interp, self.qx, kx=3, ky=3)
+        qy_interp = RectBivariateSpline(y_interp, x_interp, self.qy, kx=3, ky=3)
         
-        # Find effective flow region
-        effective_depth_start = 1.0
-        effective_depth_end = self.domain.depth - 1.0
+        # Determine starting points based on flow pattern
+        # For sheet pile problems, streamlines should start from upstream boundary
+        # and from different depths to show the flow pattern around obstacles
         
-        # Generate starting points
-        start_depths = np.linspace(effective_depth_start, effective_depth_end, num_lines)
+        # Calculate effective flow zones
+        if self.domain.sheet_piles:
+            # Get leftmost sheet pile position
+            left_pile_x = min(pile.x_position for pile in self.domain.sheet_piles)
+            
+            # Start streamlines from left boundary at various depths
+            # Some above sheet pile bottom, some below
+            pile_bottom = max(pile.bottom_depth for pile in self.domain.sheet_piles)
+            
+            # Create varied starting points
+            start_points = []
+            
+            # Lines above pile bottom (will flow around)
+            for i in range(num_lines // 2):
+                depth = 0.5 + i * (pile_bottom - 0.5) / (num_lines // 2)
+                start_points.append((0.5, depth))
+            
+            # Lines below pile bottom (will flow under)
+            for i in range(num_lines - num_lines // 2):
+                depth = pile_bottom + 0.5 + i * (self.domain.depth - pile_bottom - 1) / (num_lines - num_lines // 2)
+                if depth < self.domain.depth - 0.5:
+                    start_points.append((0.5, depth))
+        else:
+            # No sheet piles - uniform distribution
+            start_depths = np.linspace(1.0, self.domain.depth - 1.0, num_lines)
+            start_points = [(0.5, depth) for depth in start_depths]
         
-        for start_depth in start_depths:
-            # Start from left boundary
-            x_current = 0.5
-            y_current = start_depth
+        # Generate streamlines from starting points
+        for x_start, y_start in start_points:
+            x_current = x_start
+            y_current = y_start
             
             stream_x = [x_current]
             stream_y = [y_current]
             
-            # Integration parameters
-            dt = 0.1
-            max_steps = int(self.domain.width / dt * 2)
+            # Adaptive integration parameters
+            dt = 0.05  # Smaller time step for accuracy
+            max_steps = int(self.domain.width / dt * 3)
             
             for step in range(max_steps):
                 # Check boundaries
-                if (x_current >= self.domain.width - 0.5 or x_current <= 0.5 or
-                    y_current >= self.domain.depth - 0.5 or y_current <= 0.5):
+                if (x_current >= self.domain.width - 0.2 or x_current <= 0.2 or
+                    y_current >= self.domain.depth - 0.2 or y_current <= 0.2):
                     break
                 
-                # Get velocities
+                # Get velocities with error handling
                 try:
-                    vx = float(qx_interp(y_current, x_current))
-                    vy = float(qy_interp(y_current, x_current))
+                    vx = float(qx_interp(y_current, x_current)[0, 0])
+                    vy = float(qy_interp(y_current, x_current)[0, 0])
                 except:
                     break
                 
-                # Check for stagnation
+                # Check for stagnation or very low velocity
                 v_mag = np.sqrt(vx**2 + vy**2)
-                if v_mag < 1e-10:
+                if v_mag < 1e-12:
                     break
                 
-                # Normalize and integrate
+                # Use RK2 (midpoint method) for better accuracy
+                # First half step
                 vx_norm = vx / v_mag
                 vy_norm = vy / v_mag
                 
-                x_new = x_current + vx_norm * dt
-                y_new = y_current + vy_norm * dt
+                x_mid = x_current + 0.5 * vx_norm * dt
+                y_mid = y_current + 0.5 * vy_norm * dt
+                
+                # Velocity at midpoint
+                try:
+                    vx_mid = float(qx_interp(y_mid, x_mid)[0, 0])
+                    vy_mid = float(qy_interp(y_mid, x_mid)[0, 0])
+                    v_mag_mid = np.sqrt(vx_mid**2 + vy_mid**2)
+                    
+                    if v_mag_mid > 1e-12:
+                        vx_mid_norm = vx_mid / v_mag_mid
+                        vy_mid_norm = vy_mid / v_mag_mid
+                    else:
+                        vx_mid_norm, vy_mid_norm = vx_norm, vy_norm
+                except:
+                    vx_mid_norm, vy_mid_norm = vx_norm, vy_norm
+                
+                # Full step using midpoint velocity
+                x_new = x_current + vx_mid_norm * dt
+                y_new = y_current + vy_mid_norm * dt
+                
+                # Check if we hit a sheet pile or excavation boundary
+                hit_obstacle = False
+                for pile in self.domain.sheet_piles:
+                    if (abs(x_new - pile.x_position) < pile.thickness and 
+                        pile.top_depth <= y_new <= pile.bottom_depth):
+                        hit_obstacle = True
+                        break
+                
+                if hit_obstacle:
+                    break
                 
                 stream_x.append(x_new)
                 stream_y.append(y_new)
@@ -381,7 +435,28 @@ class FDMSolver(GroundwaterSolver):
                 x_current = x_new
                 y_current = y_new
             
-            if len(stream_x) > 5:  # Only keep meaningful streamlines
+            if len(stream_x) > 10:  # Keep streamlines with sufficient points
                 streamlines.append((np.array(stream_x), np.array(stream_y)))
         
         return streamlines
+    
+    def generate_equipotentials(self, num_lines: int = 15) -> List[float]:
+        """Generate appropriate equipotential levels based on head distribution"""
+        if self.H is None:
+            raise ValueError("Must solve for heads first")
+        
+        # Get head range excluding boundary effects
+        # Focus on the active flow region
+        h_interior = self.H[5:-5, 5:-5]  # Exclude near-boundary cells
+        h_min = np.min(h_interior)
+        h_max = np.max(h_interior)
+        
+        # Generate equipotential levels with proper spacing
+        # Use slightly wider range to capture boundary heads
+        h_min_plot = np.min(self.H)
+        h_max_plot = np.max(self.H)
+        
+        # Create levels with emphasis on the active flow region
+        levels = np.linspace(h_min_plot, h_max_plot, num_lines)
+        
+        return levels
