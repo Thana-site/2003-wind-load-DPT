@@ -1,871 +1,566 @@
-import streamlit as st
-import pandas as pd
-import numpy as np
-import plotly.express as px
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
-import json
-from datetime import datetime
+"""
+app.py - Streamlit application for interactive flow net analysis
+"""
 
-# ===================== PAGE CONFIGURATION =====================
+import streamlit as st
+import numpy as np
+import matplotlib.pyplot as plt
+import pandas as pd
+from datetime import datetime
+import os
+import json
+
+# Import our modules
+from geometry import Domain, SoilLayer, SheetPile, Excavation, BoundaryCondition, create_cofferdam_domain
+from fem_solver import FDMSolver
+from visualize import FlowNetVisualizer
+
+# Page configuration
 st.set_page_config(
-    page_title="Advanced Pile Foundation Analysis",
-    page_icon="🏗️",
+    page_title="Flow Net Analysis Tool",
+    page_icon="💧",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# ===================== CUSTOM CSS =====================
+# Custom CSS for better styling
 st.markdown("""
 <style>
-    .main-header {
-        font-size: 2.5rem;
-        font-weight: bold;
-        color: #1f77b4;
-        text-align: center;
-        margin-bottom: 2rem;
+    .main {
+        padding-top: 1rem;
     }
-    .section-header {
-        font-size: 1.8rem;
-        font-weight: bold;
-        color: #2c3e50;
-        margin-top: 2rem;
-        margin-bottom: 1rem;
-        border-bottom: 2px solid #1f77b4;
-        padding-bottom: 0.5rem;
+    .stAlert {
+        margin-top: 1rem;
     }
-    .foundation-card {
-        background-color: #f8f9fa;
+    div[data-testid="stMetricValue"] {
+        font-size: 24px;
+    }
+    .plot-container {
+        background-color: white;
         padding: 1rem;
-        border-radius: 10px;
-        border-left: 5px solid #1f77b4;
-        margin: 0.5rem 0;
-    }
-    .formula-box {
-        background-color: #e8f4f8;
-        padding: 1.5rem;
-        border-radius: 10px;
-        border: 2px solid #1f77b4;
-        margin: 1rem 0;
-        font-family: 'Courier New', monospace;
-    }
-    .success-box {
-        background-color: #d4edda;
-        border-left: 5px solid #28a745;
-        padding: 1rem;
-        margin: 0.5rem 0;
-    }
-    .warning-box {
-        background-color: #fff3cd;
-        border-left: 5px solid #ffc107;
-        padding: 1rem;
-        margin: 0.5rem 0;
-    }
-    .error-box {
-        background-color: #f8d7da;
-        border-left: 5px solid #dc3545;
-        padding: 1rem;
-        margin: 0.5rem 0;
+        border-radius: 0.5rem;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
     }
 </style>
 """, unsafe_allow_html=True)
 
-# ===================== TITLE =====================
-st.markdown('<h1 class="main-header">🏗️ Advanced Pile Foundation Analysis Tool</h1>', unsafe_allow_html=True)
-st.markdown('<p style="text-align: center; font-size: 1.2rem; color: #666;">Theory-Based Design with Custom Foundation Support</p>', unsafe_allow_html=True)
 
-# ===================== SESSION STATE INITIALIZATION =====================
-if 'analysis_results' not in st.session_state:
-    st.session_state.analysis_results = None
-if 'final_results' not in st.session_state:
-    st.session_state.final_results = None
-if 'custom_foundations' not in st.session_state:
-    st.session_state.custom_foundations = {}
-if 'node_assignments' not in st.session_state:
-    st.session_state.node_assignments = {}
-if 'allowed_foundations' not in st.session_state:
-    st.session_state.allowed_foundations = []
+def initialize_session_state():
+    """Initialize session state variables"""
+    if 'domain' not in st.session_state:
+        st.session_state.domain = None
+    if 'solver' not in st.session_state:
+        st.session_state.solver = None
+    if 'results' not in st.session_state:
+        st.session_state.results = None
+    if 'soil_layers' not in st.session_state:
+        st.session_state.soil_layers = [
+            {"name": "Sand", "depth_top": 0, "depth_bottom": 5, 
+             "hydraulic_conductivity": 1e-5, "porosity": 0.3},
+            {"name": "Clay", "depth_top": 5, "depth_bottom": 15, 
+             "hydraulic_conductivity": 1e-6, "porosity": 0.4}
+        ]
+    if 'last_run_params' not in st.session_state:
+        st.session_state.last_run_params = None
 
-# ===================== DEFAULT CONFIGURATIONS =====================
-DEFAULT_FOUNDATIONS = {
-    'F3': {'name': '3-Pile Triangle', 'piles': 3, 'color': '#FF6B6B',
-           'coords': [(0, 1.155), (-1.0, -0.577), (1.0, -0.577)]},
-    'F4': {'name': '4-Pile Square', 'piles': 4, 'color': '#4ECDC4',
-           'coords': [(-1, 1), (1, 1), (-1, -1), (1, -1)]},
-    'F5': {'name': '5-Pile Pentagon', 'piles': 5, 'color': '#45B7D1',
-           'coords': [(0, 1.2), (1.14, 0.37), (0.71, -0.97), (-0.71, -0.97), (-1.14, 0.37)]},
-    'F6': {'name': '6-Pile Rect 2×3', 'piles': 6, 'color': '#96CEB4',
-           'coords': [(-1, 2), (1, 2), (-1, 0), (1, 0), (-1, -2), (1, -2)]},
-    'F7': {'name': '7-Pile Hexagon+Center', 'piles': 7, 'color': '#FFEAA7',
-           'coords': [(0, 0), (1.2, 0), (-1.2, 0), (0.6, 1.04), (-0.6, 1.04), (0.6, -1.04), (-0.6, -1.04)]},
-    'F8': {'name': '8-Pile Rect 2×4', 'piles': 8, 'color': '#DDA0DD',
-           'coords': [(-1, 3), (1, 3), (-1, 1), (1, 1), (-1, -1), (1, -1), (-1, -3), (1, -3)]},
-    'F9': {'name': '9-Pile Square 3×3', 'piles': 9, 'color': '#98D8C8',
-           'coords': [(-2, 2), (0, 2), (2, 2), (-2, 0), (0, 0), (2, 0), (-2, -2), (0, -2), (2, -2)]},
-    'F10': {'name': '10-Pile Rect 2×5', 'piles': 10, 'color': '#F7DC6F',
-            'coords': [(-1, 4), (1, 4), (-1, 2), (1, 2), (-1, 0), (1, 0), (-1, -2), (1, -2), (-1, -4), (1, -4)]},
-    'F12': {'name': '12-Pile Rect 3×4', 'piles': 12, 'color': '#BB8FCE',
-            'coords': [(-2, 3), (0, 3), (2, 3), (-2, 1), (0, 1), (2, 1), 
-                      (-2, -1), (0, -1), (2, -1), (-2, -3), (0, -3), (2, -3)]},
-    'F15': {'name': '15-Pile Rect 3×5', 'piles': 15, 'color': '#85C1E2',
-            'coords': [(-2, 4), (0, 4), (2, 4), (-2, 2), (0, 2), (2, 2),
-                      (-2, 0), (0, 0), (2, 0), (-2, -2), (0, -2), (2, -2),
-                      (-2, -4), (0, -4), (2, -4)]},
-    'F18': {'name': '18-Pile Rect 3×6', 'piles': 18, 'color': '#F8B739',
-            'coords': [(-2, 5), (0, 5), (2, 5), (-2, 3), (0, 3), (2, 3),
-                      (-2, 1), (0, 1), (2, 1), (-2, -1), (0, -1), (2, -1),
-                      (-2, -3), (0, -3), (2, -3), (-2, -5), (0, -5), (2, -5)]},
-    'F20': {'name': '20-Pile Rect 4×5', 'piles': 20, 'color': '#52BE80',
-            'coords': [(-3, 4), (-1, 4), (1, 4), (3, 4), (-3, 2), (-1, 2), (1, 2), (3, 2),
-                      (-3, 0), (-1, 0), (1, 0), (3, 0), (-3, -2), (-1, -2), (1, -2), (3, -2),
-                      (-3, -4), (-1, -4), (1, -4), (3, -4)]}
-}
 
-DEFAULT_NODES = [789, 790, 791, 4561, 4572, 4576, 4581, 4586, 4627, 4632, 4637,
-                4657, 4663, 4748, 4749, 4752, 4827, 4831, 5568, 5569, 5782, 5784,
-                7446, 7447, 7448, 7453, 7461, 7464]
-
-# ===================== ANALYZER CLASS =====================
-class PileAnalyzer:
-    """Pile foundation analysis using proper structural engineering theory"""
+def create_sidebar():
+    """Create sidebar with input parameters"""
+    st.sidebar.header("⚙️ Model Configuration")
     
-    def __init__(self, pile_diameter=0.6, pile_capacity=120, pile_spacing=1.5):
-        self.pile_diameter = pile_diameter
-        self.pile_capacity = pile_capacity
-        self.pile_spacing = pile_spacing
-        self.min_spacing = 2.5 * pile_diameter
-    
-    def get_foundation_config(self, foundation_id):
-        """Get foundation configuration from default or custom"""
-        all_foundations = {**DEFAULT_FOUNDATIONS, **st.session_state.custom_foundations}
-        config = all_foundations.get(foundation_id, None)
+    # Collapsible sections
+    with st.sidebar.expander("📐 Geometry", expanded=True):
+        col1, col2 = st.columns(2)
         
-        if config is None:
-            st.warning(f"Foundation {foundation_id} not found. Using default F4.")
-            config = DEFAULT_FOUNDATIONS.get('F4')
-        
-        return config
-    
-    def calculate_properties(self, foundation_id):
-        """Calculate section properties for a foundation"""
-        config = self.get_foundation_config(foundation_id)
-        if not config:
-            return None
-        
-        # Get coordinates
-        coords = np.array(config.get('coords', []))
-        if len(coords) == 0:
-            st.error(f"No coordinates found for foundation {foundation_id}")
-            return None
-        
-        coords = coords * self.pile_spacing
-        n_piles = len(coords)
-        
-        # Calculate centroid
-        centroid_x = np.mean(coords[:, 0])
-        centroid_y = np.mean(coords[:, 1])
-        
-        # Adjust to centroid
-        x_coords = coords[:, 0] - centroid_x
-        y_coords = coords[:, 1] - centroid_y
-        
-        # Calculate moment of inertia
-        Ixx = np.sum(x_coords**2)
-        Iyy = np.sum(y_coords**2)
-        
-        # Maximum distances
-        xmax = np.max(np.abs(x_coords)) if len(x_coords) > 0 else 1.0
-        ymax = np.max(np.abs(y_coords)) if len(y_coords) > 0 else 1.0
-        
-        # Prevent division by zero
-        xmax = max(xmax, 0.1)
-        ymax = max(ymax, 0.1)
-        
-        # Section modulus
-        Zx = Ixx / ymax
-        Zy = Iyy / xmax
-        
-        return {
-            'n_piles': n_piles,
-            'Ixx': Ixx,
-            'Iyy': Iyy,
-            'Zx': Zx,
-            'Zy': Zy,
-            'xmax': xmax,
-            'ymax': ymax,
-            'coords': coords.tolist()
-        }
-    
-    def calculate_pile_loads(self, Fz, Mx, My, foundation_id):
-        """Calculate maximum pile load using P = Fz/n + My/Zx + Mx/Zy"""
-        try:
-            props = self.calculate_properties(foundation_id)
-            if not props:
-                return None
-            
-            config = self.get_foundation_config(foundation_id)
-            
-            # Calculate stress components
-            axial_stress = abs(Fz) / props['n_piles'] if props['n_piles'] > 0 else 0
-            stress_from_My = abs(My) / props['Zx'] if props['Zx'] > 0 else 0
-            stress_from_Mx = abs(Mx) / props['Zy'] if props['Zy'] > 0 else 0
-            
-            # Maximum pile load
-            max_pile_load = axial_stress + stress_from_My + stress_from_Mx
-            min_pile_load = axial_stress - stress_from_My - stress_from_Mx
-            
-            # Utilization ratio
-            utilization = max_pile_load / self.pile_capacity if self.pile_capacity > 0 else 0
-            
-            # Category
-            if utilization > 1.0:
-                category = "Over-Capacity"
-            elif utilization > 0.95:
-                category = "Near-Capacity"
-            elif utilization > 0.80:
-                category = "Optimal"
-            elif utilization > 0.60:
-                category = "Conservative"
-            else:
-                category = "Over-Conservative"
-            
-            return {
-                'foundation_id': foundation_id,
-                'foundation_name': config.get('name', 'Unknown'),
-                'n_piles': props['n_piles'],
-                'axial_stress': axial_stress,
-                'moment_stress_mx': stress_from_Mx,
-                'moment_stress_my': stress_from_My,
-                'max_pile_load': max_pile_load,
-                'min_pile_load': min_pile_load,
-                'utilization_ratio': utilization,
-                'is_safe': utilization <= 1.0,
-                'has_tension': min_pile_load < 0,
-                'category': category,
-                'color': config.get('color', '#808080'),
-                'Ixx': props['Ixx'],
-                'Iyy': props['Iyy'],
-                'Zx': props['Zx'],
-                'Zy': props['Zy']
-            }
-        except Exception as e:
-            st.error(f"Error calculating loads for {foundation_id}: {str(e)}")
-            return None
-    
-    def optimize_foundation(self, Fz, Mx, My, target_utilization=0.85, allowed_foundations=None):
-        """Find optimal foundation for given loads"""
-        if allowed_foundations is None:
-            allowed_foundations = list(DEFAULT_FOUNDATIONS.keys())
-        
-        if len(allowed_foundations) == 0:
-            allowed_foundations = ['F4', 'F6', 'F9']  # Default fallback
-        
-        results = []
-        for foundation_id in allowed_foundations:
-            result = self.calculate_pile_loads(Fz, Mx, My, foundation_id)
-            if result:
-                result['target_diff'] = abs(result['utilization_ratio'] - target_utilization)
-                results.append(result)
-        
-        if not results:
-            # Try with default F4 as last resort
-            result = self.calculate_pile_loads(Fz, Mx, My, 'F4')
-            if result:
-                return result
-            return None
-        
-        # Sort by target difference
-        results.sort(key=lambda x: x['target_diff'])
-        
-        # Find best safe design
-        for result in results:
-            if result['is_safe']:
-                return result
-        
-        # If no safe design, return lowest utilization
-        return min(results, key=lambda x: x['utilization_ratio'])
-
-# ===================== HELPER FUNCTIONS =====================
-def load_csv_file(uploaded_file):
-    """Load CSV file with multiple encoding attempts"""
-    if uploaded_file is None:
-        return None, "No file uploaded"
-    
-    encodings = ['utf-8', 'latin-1', 'cp1252', 'iso-8859-1']
-    for encoding in encodings:
-        try:
-            df = pd.read_csv(uploaded_file, encoding=encoding)
-            uploaded_file.seek(0)  # Reset file pointer
-            return df, f"Successfully loaded with {encoding} encoding"
-        except:
-            uploaded_file.seek(0)
-            continue
-    
-    return None, "Could not decode file with any standard encoding"
-
-def process_analysis(df, selected_nodes, analyzer, target_utilization=0.85):
-    """Process pile analysis for selected nodes"""
-    if df is None:
-        return None
-    
-    # Filter for selected nodes
-    df_filtered = df[df['Node'].isin(selected_nodes)]
-    
-    if len(df_filtered) == 0:
-        return None
-    
-    results = []
-    
-    for idx, row in df_filtered.iterrows():
-        # Extract loads
-        Fz = abs(row.get('FZ (tonf)', row.get('Fz', 0)))
-        Mx = abs(row.get('MX (tonf·m)', row.get('Mx', 0)))
-        My = abs(row.get('MY (tonf·m)', row.get('My', 0)))
-        
-        # Check for manual assignment
-        node = row['Node']
-        if node in st.session_state.node_assignments:
-            foundation_id = st.session_state.node_assignments[node]
-            result = analyzer.calculate_pile_loads(Fz, Mx, My, foundation_id)
-            result['assignment_method'] = 'Manual'
-        else:
-            # Automatic optimization
-            allowed = st.session_state.allowed_foundations if st.session_state.allowed_foundations else None
-            result = analyzer.optimize_foundation(Fz, Mx, My, target_utilization, allowed)
-            result['assignment_method'] = 'Optimized'
-        
-        if result:
-            # Add node information
-            result['Node'] = node
-            result['X'] = row.get('X', 0)
-            result['Y'] = row.get('Y', 0)
-            result['Z'] = row.get('Z', 0)
-            result['Fz'] = Fz
-            result['Mx'] = Mx
-            result['My'] = My
-            result['Load_Case'] = row.get('Load Combination', row.get('Load Case', f'LC_{idx}'))
-            
-            results.append(result)
-    
-    return pd.DataFrame(results)
-
-def create_custom_foundation_ui():
-    """UI for creating custom foundations"""
-    st.markdown("### 🛠️ Custom Foundation Designer")
-    
-    col1, col2 = st.columns([1, 1])
-    
-    with col1:
-        st.markdown("#### Foundation Details")
-        
-        custom_id = st.text_input("Foundation ID", value="CUSTOM1", key="custom_id")
-        custom_name = st.text_input("Foundation Name", value="Custom Foundation", key="custom_name")
-        custom_color = st.color_picker("Color", value="#FF00FF", key="custom_color")
-        
-        st.markdown("#### Pile Coordinates")
-        
-        input_method = st.radio("Input Method", ["Table", "Text", "Template"], key="input_method")
-        
-        if input_method == "Table":
-            n_piles = st.number_input("Number of Piles", 2, 50, 4, key="n_piles")
-            
-            # Create coordinate table
-            coords_data = []
-            for i in range(n_piles):
-                coords_data.append({'Pile': f'P{i+1}', 'X': 0.0, 'Y': 0.0})
-            
-            df_coords = pd.DataFrame(coords_data)
-            edited_df = st.data_editor(df_coords, use_container_width=True, key="coords_table")
-            
-            coordinates = [(row['X'], row['Y']) for _, row in edited_df.iterrows()]
-            
-        elif input_method == "Text":
-            coord_text = st.text_area(
-                "Enter coordinates (x,y per line)",
-                value="0,2\n1.73,1\n1.73,-1\n0,-2\n-1.73,-1\n-1.73,1",
-                height=200,
-                key="coord_text"
-            )
-            
-            coordinates = []
-            try:
-                for line in coord_text.strip().split('\n'):
-                    if line.strip():
-                        x, y = map(float, line.split(','))
-                        coordinates.append((x, y))
-            except:
-                st.error("Invalid coordinate format")
-                coordinates = []
-        
-        else:  # Template
-            template = st.selectbox("Select Template", 
-                                   ["Square", "Circle", "Rectangle", "Hexagon"],
-                                   key="template")
-            
-            if template == "Square":
-                n = st.slider("Grid Size", 2, 5, 3, key="square_n")
-                spacing = st.slider("Spacing", 1.0, 3.0, 1.5, 0.1, key="square_spacing")
-                coordinates = []
-                for i in range(n):
-                    for j in range(n):
-                        x = (j - (n-1)/2) * spacing
-                        y = (i - (n-1)/2) * spacing
-                        coordinates.append((x, y))
-            
-            elif template == "Circle":
-                n = st.slider("Number of Piles", 3, 20, 8, key="circle_n")
-                radius = st.slider("Radius", 1.0, 5.0, 2.0, 0.1, key="circle_radius")
-                center = st.checkbox("Include Center", key="circle_center")
-                
-                coordinates = []
-                if center:
-                    coordinates.append((0, 0))
-                for i in range(n):
-                    angle = 2 * np.pi * i / n
-                    x = radius * np.cos(angle)
-                    y = radius * np.sin(angle)
-                    coordinates.append((round(x, 2), round(y, 2)))
-            
-            elif template == "Rectangle":
-                rows = st.slider("Rows", 2, 6, 3, key="rect_rows")
-                cols = st.slider("Columns", 2, 6, 3, key="rect_cols")
-                spacing = st.slider("Spacing", 1.0, 3.0, 1.5, 0.1, key="rect_spacing")
-                
-                coordinates = []
-                for i in range(rows):
-                    for j in range(cols):
-                        x = (j - (cols-1)/2) * spacing
-                        y = (i - (rows-1)/2) * spacing
-                        coordinates.append((x, y))
-            
-            else:  # Hexagon
-                coordinates = [(0, 2), (1.73, 1), (1.73, -1), 
-                              (0, -2), (-1.73, -1), (-1.73, 1)]
-    
-    with col2:
-        st.markdown("#### Preview")
-        
-        if coordinates:
-            # Create visualization
-            coords_array = np.array(coordinates)
-            
-            fig = go.Figure()
-            
-            # Add piles
-            fig.add_trace(go.Scatter(
-                x=coords_array[:, 0],
-                y=coords_array[:, 1],
-                mode='markers+text',
-                marker=dict(size=25, color=custom_color, 
-                           symbol='circle', line=dict(color='darkblue', width=2)),
-                text=[f'P{i+1}' for i in range(len(coords_array))],
-                textposition='top center',
-                name='Piles'
-            ))
-            
-            # Add centroid
-            centroid_x = np.mean(coords_array[:, 0])
-            centroid_y = np.mean(coords_array[:, 1])
-            
-            fig.add_trace(go.Scatter(
-                x=[centroid_x],
-                y=[centroid_y],
-                mode='markers',
-                marker=dict(size=10, color='red', symbol='x'),
-                name='Centroid'
-            ))
-            
-            # Add grid
-            fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor='lightgray')
-            fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor='lightgray')
-            
-            fig.update_layout(
-                title=f'{custom_id}: {custom_name}',
-                xaxis_title='X (m)',
-                yaxis_title='Y (m)',
-                height=400,
-                showlegend=True,
-                xaxis=dict(scaleanchor="y"),
-                yaxis=dict(scaleanchor="x")
-            )
-            
-            st.plotly_chart(fig, use_container_width=True)
-            
-            # Calculate properties
-            st.markdown("#### Properties")
-            
-            x_coords = coords_array[:, 0] - centroid_x
-            y_coords = coords_array[:, 1] - centroid_y
-            
-            Ixx = np.sum(x_coords**2)
-            Iyy = np.sum(y_coords**2)
-            
-            col1_prop, col2_prop = st.columns(2)
-            with col1_prop:
-                st.metric("Number of Piles", len(coordinates))
-                st.metric("Ixx (m²)", f"{Ixx:.3f}")
-            
-            with col2_prop:
-                st.metric("Iyy (m²)", f"{Iyy:.3f}")
-                xmax = np.max(np.abs(x_coords))
-                ymax = np.max(np.abs(y_coords))
-                st.metric("Max Distance (m)", f"{max(xmax, ymax):.2f}")
-            
-            # Save button
-            if st.button("💾 Save Custom Foundation", type="primary", use_container_width=True):
-                custom_config = {
-                    'name': custom_name,
-                    'piles': len(coordinates),
-                    'color': custom_color,
-                    'coords': coordinates
-                }
-                st.session_state.custom_foundations[custom_id] = custom_config
-                st.success(f"✅ {custom_id} saved successfully!")
-                st.rerun()
-
-def create_visualizations(results_df):
-    """Create analysis visualizations"""
-    if results_df is None or len(results_df) == 0:
-        return None
-    
-    # Create subplots
-    fig = make_subplots(
-        rows=2, cols=2,
-        subplot_titles=('Foundation Distribution', 'Utilization by Type',
-                       'Load vs Utilization', 'Site Plan'),
-        specs=[[{'type': 'pie'}, {'type': 'box'}],
-               [{'type': 'scatter'}, {'type': 'scatter'}]]
-    )
-    
-    # 1. Pie chart
-    foundation_counts = results_df['foundation_id'].value_counts()
-    colors = [results_df[results_df['foundation_id'] == f]['color'].iloc[0] 
-             for f in foundation_counts.index]
-    
-    fig.add_trace(
-        go.Pie(labels=foundation_counts.index, 
-               values=foundation_counts.values,
-               marker=dict(colors=colors)),
-        row=1, col=1
-    )
-    
-    # 2. Box plot
-    for foundation in results_df['foundation_id'].unique():
-        data = results_df[results_df['foundation_id'] == foundation]
-        fig.add_trace(
-            go.Box(y=data['utilization_ratio'], name=foundation,
-                  marker_color=data['color'].iloc[0]),
-            row=1, col=2
-        )
-    
-    # 3. Load vs Utilization
-    fig.add_trace(
-        go.Scatter(x=results_df['Fz'], y=results_df['utilization_ratio'],
-                  mode='markers', marker=dict(size=10, color=results_df['n_piles'],
-                                             colorscale='Viridis'),
-                  text=results_df['Node'], name='Nodes'),
-        row=2, col=1
-    )
-    
-    # 4. Site plan (if coordinates exist)
-    if 'X' in results_df.columns and 'Y' in results_df.columns:
-        for foundation in results_df['foundation_id'].unique():
-            data = results_df[results_df['foundation_id'] == foundation]
-            fig.add_trace(
-                go.Scatter(x=data['X'], y=data['Y'],
-                          mode='markers+text',
-                          marker=dict(size=15, color=data['color'].iloc[0]),
-                          text=data['Node'], textposition='top center',
-                          name=foundation),
-                row=2, col=2
-            )
-    
-    fig.update_layout(height=800, showlegend=True, title_text="Pile Foundation Analysis Results")
-    
-    return fig
-
-# ===================== SIDEBAR =====================
-st.sidebar.title("📋 Configuration")
-
-# File upload
-uploaded_file = st.sidebar.file_uploader("Upload CSV File", type=['csv'])
-
-# Pile parameters
-st.sidebar.subheader("🔧 Pile Parameters")
-pile_diameter = st.sidebar.number_input("Pile Diameter (m)", 0.3, 2.0, 0.6, 0.1)
-pile_capacity = st.sidebar.number_input("Pile Capacity (tonf)", 50, 500, 120, 10)
-pile_spacing = st.sidebar.number_input("Pile Spacing (m)", 1.0, 5.0, 1.5, 0.1)
-target_utilization = st.sidebar.slider("Target Utilization", 0.7, 0.95, 0.85, 0.05)
-
-# Node selection
-st.sidebar.subheader("🎯 Node Selection")
-use_default = st.sidebar.checkbox("Use Default Nodes", value=True)
-
-if use_default:
-    selected_nodes = DEFAULT_NODES
-else:
-    node_input = st.sidebar.text_area("Enter nodes (comma-separated)", 
-                                      value=",".join(map(str, DEFAULT_NODES[:5])))
-    try:
-        selected_nodes = [int(x.strip()) for x in node_input.split(",")]
-    except:
-        selected_nodes = DEFAULT_NODES[:5]
-        st.sidebar.error("Invalid node format")
-
-st.sidebar.info(f"Selected {len(selected_nodes)} nodes")
-
-# ===================== MAIN CONTENT - TABS =====================
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
-    "📚 Theory & Setup",
-    "🛠️ Custom Foundations",
-    "📊 Data & Analysis",
-    "📈 Results & Visualization",
-    "💾 Export"
-])
-
-with tab1:
-    st.markdown('<h2 class="section-header">📚 Theory & Foundation Setup</h2>', unsafe_allow_html=True)
-    
-    col1, col2 = st.columns([2, 1])
-    
-    with col1:
-        st.markdown("""
-        ### Pile Group Design Formula
-        
-        <div class="formula-box">
-        <strong>Maximum Pile Load:</strong><br>
-        P<sub>max</sub> = P/n + |M<sub>y</sub>|/Z<sub>x</sub> + |M<sub>x</sub>|/Z<sub>y</sub>
-        <br><br>
-        Where:<br>
-        • P = Vertical load (tonf)<br>
-        • n = Number of piles<br>
-        • M<sub>x</sub>, M<sub>y</sub> = Moments (tonf·m)<br>
-        • Z<sub>x</sub> = I<sub>xx</sub>/x<sub>max</sub> (Section modulus)<br>
-        • Z<sub>y</sub> = I<sub>yy</sub>/y<sub>max</sub> (Section modulus)
-        </div>
-        """, unsafe_allow_html=True)
-        
-        st.markdown("### Foundation Assignment")
-        
-        assignment_method = st.radio(
-            "Assignment Method",
-            ["Automatic Optimization", "Manual Assignment", "Selected Foundations Only"]
-        )
-        
-        if assignment_method == "Automatic Optimization":
-            st.info("System will automatically select optimal foundation for each node")
-            
-        elif assignment_method == "Manual Assignment":
-            st.warning("Manually assign foundations to specific nodes")
-            
-            manual_nodes = st.multiselect("Select Nodes", selected_nodes)
-            all_foundations = {**DEFAULT_FOUNDATIONS, **st.session_state.custom_foundations}
-            manual_foundation = st.selectbox("Assign Foundation", list(all_foundations.keys()))
-            
-            if st.button("Apply Assignment"):
-                for node in manual_nodes:
-                    st.session_state.node_assignments[node] = manual_foundation
-                st.success(f"Assigned {manual_foundation} to {len(manual_nodes)} nodes")
-        
-        else:  # Selected Foundations Only
-            all_foundations = {**DEFAULT_FOUNDATIONS, **st.session_state.custom_foundations}
-            selected_foundations = st.multiselect(
-                "Select Allowed Foundations",
-                list(all_foundations.keys()),
-                default=list(DEFAULT_FOUNDATIONS.keys())[:5]
-            )
-            st.session_state.allowed_foundations = selected_foundations
-    
-    with col2:
-        st.markdown("### Available Foundations")
-        
-        # Default foundations
-        st.markdown("**Default Foundations:**")
-        for fid, config in DEFAULT_FOUNDATIONS.items():
-            st.markdown(f"""
-            <div class="foundation-card" style="border-left-color: {config['color']}">
-            <strong>{fid}</strong>: {config['name']}<br>
-            <small>{config['piles']} piles</small>
-            </div>
-            """, unsafe_allow_html=True)
-        
-        # Custom foundations
-        if st.session_state.custom_foundations:
-            st.markdown("**Custom Foundations:**")
-            for fid, config in st.session_state.custom_foundations.items():
-                st.markdown(f"""
-                <div class="foundation-card" style="border-left-color: {config['color']}">
-                <strong>{fid}</strong>: {config['name']}<br>
-                <small>{config['piles']} piles</small>
-                </div>
-                """, unsafe_allow_html=True)
-
-with tab2:
-    st.markdown('<h2 class="section-header">🛠️ Custom Foundation Designer</h2>', unsafe_allow_html=True)
-    
-    create_custom_foundation_ui()
-    
-    # Display saved custom foundations
-    if st.session_state.custom_foundations:
-        st.markdown("### 📚 Saved Custom Foundations")
-        
-        for fid, config in st.session_state.custom_foundations.items():
-            with st.expander(f"{fid}: {config['name']} ({config['piles']} piles)"):
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.write(f"**Piles:** {config['piles']}")
-                    st.write(f"**Color:** {config['color']}")
-                with col2:
-                    if st.button(f"Delete {fid}", key=f"del_{fid}"):
-                        del st.session_state.custom_foundations[fid]
-                        st.rerun()
-
-with tab3:
-    st.markdown('<h2 class="section-header">📊 Data Input & Analysis</h2>', unsafe_allow_html=True)
-    
-    if uploaded_file:
-        df, message = load_csv_file(uploaded_file)
-        
-        if df is not None:
-            st.success(message)
-            
-            # Data overview
-            col1, col2, col3, col4 = st.columns(4)
-            with col1:
-                st.metric("Total Rows", len(df))
-            with col2:
-                st.metric("Columns", len(df.columns))
-            with col3:
-                st.metric("Unique Nodes", df['Node'].nunique() if 'Node' in df.columns else 0)
-            with col4:
-                total_foundations = len(DEFAULT_FOUNDATIONS) + len(st.session_state.custom_foundations)
-                st.metric("Available Foundations", total_foundations)
-            
-            # Preview data
-            with st.expander("Preview Data"):
-                st.dataframe(df.head(10), use_container_width=True)
-            
-            # Run analysis
-            if st.button("🚀 Run Analysis", type="primary", use_container_width=True):
-                with st.spinner("Analyzing..."):
-                    analyzer = PileAnalyzer(pile_diameter, pile_capacity, pile_spacing)
-                    results = process_analysis(df, selected_nodes, analyzer, target_utilization)
-                    
-                    if results is not None and len(results) > 0:
-                        st.session_state.final_results = results
-                        st.success(f"✅ Analysis completed for {len(results)} nodes!")
-                        st.balloons()
-                    else:
-                        st.error("No valid results generated")
-        else:
-            st.error(message)
-    else:
-        st.info("Please upload a CSV file to begin analysis")
-        
-        # Show expected format
-        st.subheader("Expected Data Format")
-        example_df = pd.DataFrame({
-            'Node': [789, 790, 791],
-            'X': [0, 10, 20],
-            'Y': [0, 0, 0],
-            'FZ (tonf)': [400, 350, 450],
-            'MX (tonf·m)': [80, 70, 90],
-            'MY (tonf·m)': [60, 50, 70]
-        })
-        st.dataframe(example_df, use_container_width=True)
-
-with tab4:
-    st.markdown('<h2 class="section-header">📈 Results & Visualization</h2>', unsafe_allow_html=True)
-    
-    if st.session_state.final_results is not None:
-        results = st.session_state.final_results
-        
-        # Summary metrics
-        col1, col2, col3, col4 = st.columns(4)
         with col1:
-            st.metric("Nodes Analyzed", len(results))
+            domain_width = st.number_input(
+                "Domain Width (m)", 
+                min_value=10.0, max_value=100.0, value=40.0, step=5.0,
+                help="Total width of the analysis domain"
+            )
+            domain_depth = st.number_input(
+                "Domain Depth (m)", 
+                min_value=5.0, max_value=50.0, value=15.0, step=1.0,
+                help="Total depth of the analysis domain"
+            )
+        
         with col2:
-            st.metric("Avg Utilization", f"{results['utilization_ratio'].mean():.1%}")
-        with col3:
-            safe_count = len(results[results['is_safe']])
-            st.metric("Safe Designs", f"{safe_count}/{len(results)}")
-        with col4:
-            total_piles = results['n_piles'].sum()
-            st.metric("Total Piles", int(total_piles))
+            sheet_pile_length = st.number_input(
+                "Sheet Pile Length (m)", 
+                min_value=2.0, max_value=30.0, value=10.0, step=1.0,
+                help="Total length of sheet pile from surface"
+            )
+            excavation_depth = st.number_input(
+                "Excavation Depth (m)", 
+                min_value=1.0, max_value=min(sheet_pile_length - 1, 20.0), 
+                value=6.0, step=0.5,
+                help="Depth of excavation below ground surface"
+            )
         
-        # Results table
-        st.subheader("Analysis Results")
-        display_cols = ['Node', 'foundation_id', 'n_piles', 'Fz', 'max_pile_load', 
-                       'utilization_ratio', 'category', 'is_safe']
-        st.dataframe(results[display_cols], use_container_width=True)
-        
-        # Visualizations
-        st.subheader("Visualizations")
-        fig = create_visualizations(results)
-        if fig:
-            st.plotly_chart(fig, use_container_width=True)
-    else:
-        st.info("No results to display. Please run analysis first.")
-
-with tab5:
-    st.markdown('<h2 class="section-header">💾 Export Results</h2>', unsafe_allow_html=True)
+        excavation_width = st.number_input(
+            "Excavation Width (m)", 
+            min_value=2.0, max_value=domain_width - 10, value=10.0, step=1.0,
+            help="Width between sheet piles"
+        )
     
-    if st.session_state.final_results is not None:
-        results = st.session_state.final_results
+    with st.sidebar.expander("💧 Water Levels", expanded=True):
+        water_level_outside = st.number_input(
+            "Water Level Outside (m below GL)", 
+            min_value=0.0, max_value=excavation_depth, value=2.0, step=0.5,
+            help="Groundwater level outside excavation"
+        )
+        
+        water_inside_type = st.radio(
+            "Excavation Condition",
+            ["Dewatered (Dry)", "Partially Filled", "Fully Filled"],
+            help="Water condition inside excavation"
+        )
+        
+        if water_inside_type == "Partially Filled":
+            water_level_inside = st.number_input(
+                "Water Level Inside (m below GL)", 
+                min_value=excavation_depth * 0.5, 
+                max_value=excavation_depth, 
+                value=excavation_depth - 1.0, 
+                step=0.5
+            )
+        elif water_inside_type == "Fully Filled":
+            water_level_inside = water_level_outside
+        else:  # Dewatered
+            water_level_inside = excavation_depth
+    
+    with st.sidebar.expander("🪨 Soil Layers", expanded=False):
+        st.write("Define soil layers from top to bottom:")
+        
+        num_layers = st.number_input(
+            "Number of Layers", 
+            min_value=1, max_value=5, value=2, step=1
+        )
+        
+        soil_layers = []
+        previous_bottom = 0
+        
+        for i in range(num_layers):
+            st.write(f"**Layer {i+1}**")
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                name = st.text_input(
+                    f"Name", 
+                    value=st.session_state.soil_layers[i]["name"] if i < len(st.session_state.soil_layers) else f"Layer {i+1}",
+                    key=f"layer_name_{i}"
+                )
+                k = st.number_input(
+                    f"K (m/s)", 
+                    min_value=1e-12, max_value=1e-2, 
+                    value=st.session_state.soil_layers[i]["hydraulic_conductivity"] if i < len(st.session_state.soil_layers) else 1e-6,
+                    format="%.2e", key=f"layer_k_{i}"
+                )
+            
+            with col2:
+                depth_top = previous_bottom
+                depth_bottom = st.number_input(
+                    f"Bottom (m)", 
+                    min_value=depth_top + 0.5, 
+                    max_value=domain_depth,
+                    value=min(st.session_state.soil_layers[i]["depth_bottom"] if i < len(st.session_state.soil_layers) else depth_top + 5, domain_depth),
+                    step=0.5, key=f"layer_bottom_{i}"
+                )
+                porosity = st.number_input(
+                    f"Porosity", 
+                    min_value=0.1, max_value=0.6, 
+                    value=st.session_state.soil_layers[i]["porosity"] if i < len(st.session_state.soil_layers) else 0.3,
+                    step=0.05, key=f"layer_porosity_{i}"
+                )
+            
+            soil_layers.append({
+                "name": name,
+                "depth_top": depth_top,
+                "depth_bottom": depth_bottom,
+                "hydraulic_conductivity": k,
+                "porosity": porosity
+            })
+            
+            previous_bottom = depth_bottom
+            
+            if i < num_layers - 1:
+                st.divider()
+        
+        st.session_state.soil_layers = soil_layers
+    
+    with st.sidebar.expander("🔢 Numerical Settings", expanded=False):
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            nx = st.number_input(
+                "Grid Points (X)", 
+                min_value=51, max_value=501, value=201, step=50,
+                help="Number of grid points in horizontal direction"
+            )
+        
+        with col2:
+            ny = st.number_input(
+                "Grid Points (Y)", 
+                min_value=51, max_value=501, value=151, step=50,
+                help="Number of grid points in vertical direction"
+            )
+        
+        solver_type = st.selectbox(
+            "Solver Method",
+            ["Finite Difference Method (FDM)", "Finite Element Method (FEM)"],
+            help="Numerical method for solving flow equations"
+        )
+    
+    st.sidebar.divider()
+    
+    # Run analysis button
+    run_button = st.sidebar.button(
+        "🚀 Run Analysis", 
+        type="primary", 
+        use_container_width=True
+    )
+    
+    # Export options
+    with st.sidebar.expander("💾 Export Options", expanded=False):
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            export_csv = st.button("📊 Export CSV", use_container_width=True)
+        
+        with col2:
+            export_plots = st.button("📈 Export Plots", use_container_width=True)
+    
+    # Return parameters
+    params = {
+        'domain_width': domain_width,
+        'domain_depth': domain_depth,
+        'sheet_pile_length': sheet_pile_length,
+        'excavation_depth': excavation_depth,
+        'excavation_width': excavation_width,
+        'water_level_outside': water_level_outside,
+        'water_level_inside': water_level_inside,
+        'soil_layers': soil_layers,
+        'nx': nx,
+        'ny': ny,
+        'solver_type': solver_type,
+        'run_analysis': run_button,
+        'export_csv': export_csv,
+        'export_plots': export_plots
+    }
+    
+    return params
+
+
+def run_analysis(params):
+    """Run the flow net analysis with given parameters"""
+    
+    # Create progress indicator
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    
+    try:
+        # Step 1: Create domain
+        status_text.text("Creating domain geometry...")
+        progress_bar.progress(20)
+        
+        domain = create_cofferdam_domain(
+            sheet_pile_length=params['sheet_pile_length'],
+            excavation_depth=params['excavation_depth'],
+            excavation_width=params['excavation_width'],
+            domain_width=params['domain_width'],
+            domain_depth=params['domain_depth'],
+            water_level_outside=params['water_level_outside'],
+            water_level_inside=params['water_level_inside'],
+            soil_layers_config=params['soil_layers']
+        )
+        
+        # Update grid resolution
+        domain.nx = int(params['nx'])
+        domain.ny = int(params['ny'])
+        domain.__post_init__()  # Recalculate derived properties
+        
+        # Step 2: Validate domain
+        status_text.text("Validating configuration...")
+        progress_bar.progress(30)
+        
+        warnings = domain.validate()
+        if warnings:
+            for warning in warnings:
+                st.warning(warning)
+        
+        # Step 3: Create and run solver
+        status_text.text("Solving groundwater flow equations...")
+        progress_bar.progress(50)
+        
+        # Currently only FDM is implemented
+        solver = FDMSolver(domain)
+        H = solver.solve()
+        
+        # Step 4: Calculate velocities
+        status_text.text("Calculating seepage velocities...")
+        progress_bar.progress(70)
+        
+        qx, qy = solver.calculate_velocities()
+        
+        # Step 5: Calculate results
+        status_text.text("Computing results...")
+        progress_bar.progress(90)
+        
+        seepage = solver.calculate_seepage_discharge()
+        gradients = solver.calculate_exit_gradients()
+        
+        # Complete
+        progress_bar.progress(100)
+        status_text.text("Analysis complete!")
+        
+        # Store results in session state
+        st.session_state.domain = domain
+        st.session_state.solver = solver
+        st.session_state.results = {
+            'seepage': seepage,
+            'gradients': gradients,
+            'H': H,
+            'qx': qx,
+            'qy': qy
+        }
+        st.session_state.last_run_params = params
+        
+        # Clear progress indicators
+        progress_bar.empty()
+        status_text.empty()
+        
+        return True
+        
+    except Exception as e:
+        progress_bar.empty()
+        status_text.empty()
+        st.error(f"Analysis failed: {str(e)}")
+        return False
+
+
+def display_results():
+    """Display analysis results"""
+    
+    if st.session_state.solver is None:
+        st.info("👈 Configure parameters and click 'Run Analysis' to start")
+        return
+    
+    # Create visualizer
+    viz = FlowNetVisualizer(st.session_state.domain, st.session_state.solver)
+    
+    # Tabs for different views
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+        "📊 Dashboard", 
+        "🌊 Flow Net", 
+        "📈 Hydraulic Head", 
+        "➡️ Velocity Field", 
+        "📋 Numerical Results"
+    ])
+    
+    with tab1:
+        st.subheader("Analysis Dashboard")
+        
+        # Key metrics
+        col1, col2, col3, col4 = st.columns(4)
+        
+        results = st.session_state.results
+        
+        with col1:
+            st.metric(
+                "Total Seepage", 
+                f"{abs(results['seepage'].get('excavation_bottom', 0)):.2e} m³/s/m",
+                help="Seepage flow rate per unit width"
+            )
+        
+        with col2:
+            st.metric(
+                "Safety Factor", 
+                f"{results['gradients']['safety_factor']:.2f}",
+                help="Against piping failure (>1.5 is safe)"
+            )
+        
+        with col3:
+            st.metric(
+                "Max Exit Gradient", 
+                f"{results['gradients']['max_exit_gradient']:.3f}",
+                help="Maximum hydraulic gradient at exit points"
+            )
+        
+        with col4:
+            st.metric(
+                "Mass Balance Error", 
+                f"{results['seepage']['mass_balance_error']:.1f}%",
+                help="Numerical accuracy check (<2% is good)"
+            )
+        
+        # Dashboard plot
+        st.pyplot(viz.plot_summary_dashboard(figsize=(16, 10)))
+    
+    with tab2:
+        st.subheader("Flow Net Visualization")
+        
+        col1, col2 = st.columns([3, 1])
+        
+        with col2:
+            st.write("**Visualization Options**")
+            num_equipotentials = st.slider(
+                "Equipotentials", 
+                min_value=5, max_value=30, value=15, step=1
+            )
+            num_streamlines = st.slider(
+                "Flow Lines", 
+                min_value=3, max_value=20, value=10, step=1
+            )
+            show_vectors = st.checkbox("Show Velocity Vectors", value=True)
+            show_mesh = st.checkbox("Show Mesh", value=False)
+        
+        with col1:
+            fig = viz.plot_flow_net(
+                num_equipotentials=num_equipotentials,
+                num_streamlines=num_streamlines,
+                show_velocity_vectors=show_vectors,
+                show_mesh=show_mesh,
+                figsize=(12, 8)
+            )
+            st.pyplot(fig)
+    
+    with tab3:
+        st.subheader("Hydraulic Head Distribution")
+        
+        col1, col2 = st.columns([3, 1])
+        
+        with col2:
+            st.write("**Statistics**")
+            H = results['H']
+            st.write(f"Min Head: {np.min(H):.2f} m")
+            st.write(f"Max Head: {np.max(H):.2f} m")
+            st.write(f"Mean Head: {np.mean(H):.2f} m")
+            st.write(f"Std Dev: {np.std(H):.2f} m")
+        
+        with col1:
+            st.pyplot(viz.plot_hydraulic_head(figsize=(12, 8)))
+    
+    with tab4:
+        st.subheader("Seepage Velocity Field")
+        
+        col1, col2 = st.columns([3, 1])
+        
+        with col2:
+            st.write("**Velocity Statistics**")
+            v_mag = np.sqrt(results['qx']**2 + results['qy']**2)
+            st.write(f"Max Velocity: {np.max(v_mag):.2e} m/s")
+            st.write(f"Mean Velocity: {np.mean(v_mag):.2e} m/s")
+            st.write(f"Min Velocity: {np.min(v_mag[v_mag > 0]):.2e} m/s")
+        
+        with col1:
+            st.pyplot(viz.plot_velocity_field(figsize=(12, 8)))
+    
+    with tab5:
+        st.subheader("Detailed Numerical Results")
         
         col1, col2 = st.columns(2)
         
         with col1:
-            # Export CSV
-            csv = results.to_csv(index=False)
-            st.download_button(
-                "📥 Download Results (CSV)",
-                data=csv,
-                file_name=f"pile_analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                mime="text/csv",
-                use_container_width=True
+            st.write("**Seepage Flow Rates**")
+            seepage_df = pd.DataFrame(
+                [(k.replace('_', ' ').title(), f"{v:.6e}" if 'error' not in k else f"{v:.2f}%") 
+                 for k, v in results['seepage'].items()],
+                columns=["Parameter", "Value"]
             )
+            st.dataframe(seepage_df, use_container_width=True)
         
         with col2:
-            # Export custom foundations
-            if st.session_state.custom_foundations:
-                custom_json = json.dumps(st.session_state.custom_foundations, indent=2)
+            st.write("**Exit Gradients**")
+            gradient_df = pd.DataFrame(
+                [(k.replace('_', ' ').title(), f"{v:.4f}") 
+                 for k, v in results['gradients'].items()],
+                columns=["Location", "Gradient"]
+            )
+            st.dataframe(gradient_df, use_container_width=True)
+        
+        # Domain configuration
+        st.write("**Domain Configuration**")
+        config_data = {
+            "Domain Width": f"{st.session_state.domain.width} m",
+            "Domain Depth": f"{st.session_state.domain.depth} m",
+            "Grid Resolution": f"{st.session_state.domain.nx} × {st.session_state.domain.ny}",
+            "Sheet Pile Length": f"{st.session_state.last_run_params['sheet_pile_length']} m",
+            "Excavation Depth": f"{st.session_state.last_run_params['excavation_depth']} m",
+            "Excavation Width": f"{st.session_state.last_run_params['excavation_width']} m"
+        }
+        config_df = pd.DataFrame(list(config_data.items()), columns=["Parameter", "Value"])
+        st.dataframe(config_df, use_container_width=True)
+
+
+def handle_exports(params):
+    """Handle export functions"""
+    
+    if params['export_csv'] and st.session_state.solver is not None:
+        viz = FlowNetVisualizer(st.session_state.domain, st.session_state.solver)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"flownet_results_{timestamp}.csv"
+        
+        try:
+            viz.export_results_to_csv(filename)
+            with open(filename, 'rb') as f:
                 st.download_button(
-                    "📥 Export Custom Foundations (JSON)",
-                    data=custom_json,
-                    file_name=f"custom_foundations_{datetime.now().strftime('%Y%m%d')}.json",
-                    mime="application/json",
-                    use_container_width=True
+                    label="📥 Download CSV Results",
+                    data=f.read(),
+                    file_name=filename,
+                    mime='text/csv'
                 )
+            os.remove(filename)  # Clean up
+            st.success("CSV export ready for download!")
+        except Exception as e:
+            st.error(f"Export failed: {str(e)}")
+    
+    if params['export_plots'] and st.session_state.solver is not None:
+        viz = FlowNetVisualizer(st.session_state.domain, st.session_state.solver)
         
-        # Generate report
-        report = f"""# Pile Foundation Analysis Report
-Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+        # Create a zip file with all plots
+        # (Implementation would require additional libraries like zipfile)
+        st.info("Plot export feature - would save all visualizations as PNG files")
 
-## Configuration
-- Pile Diameter: {pile_diameter} m
-- Pile Capacity: {pile_capacity} tonf
-- Pile Spacing: {pile_spacing} m
-- Target Utilization: {target_utilization:.0%}
 
-## Results Summary
-- Total Nodes: {len(results)}
-- Average Utilization: {results['utilization_ratio'].mean():.1%}
-- Safe Designs: {len(results[results['is_safe']])} / {len(results)}
-- Total Piles Required: {results['n_piles'].sum()}
+def main():
+    """Main application function"""
+    
+    # Page header
+    st.title("💧 Flow Net Analysis Tool")
+    st.markdown("**Interactive groundwater flow analysis for sheet pile excavations**")
+    
+    # Initialize session state
+    initialize_session_state()
+    
+    # Create sidebar with parameters
+    params = create_sidebar()
+    
+    # Run analysis if requested
+    if params['run_analysis']:
+        with st.spinner("Running analysis..."):
+            success = run_analysis(params)
+            if success:
+                st.success("✅ Analysis completed successfully!")
+                st.balloons()
+    
+    # Handle exports
+    handle_exports(params)
+    
+    # Display results
+    display_results()
+    
+    # Footer
+    st.divider()
+    st.markdown(
+        """
+        <div style='text-align: center; color: gray;'>
+        Flow Net Analysis Tool v1.0 | Built with Streamlit & Python<br>
+        For educational and engineering analysis purposes
+        </div>
+        """, 
+        unsafe_allow_html=True
+    )
 
-## Foundation Distribution
-{results['foundation_id'].value_counts().to_string()}
-"""
-        
-        st.download_button(
-            "📄 Download Report (MD)",
-            data=report,
-            file_name=f"analysis_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md",
-            mime="text/markdown",
-            use_container_width=True
-        )
-        
-        st.success("✅ Export options ready!")
-    else:
-        st.info("No results to export")
+
+if __name__ == "__main__":
+    main()
