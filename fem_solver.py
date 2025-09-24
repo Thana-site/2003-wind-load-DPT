@@ -348,26 +348,33 @@ class FDMSolver(GroundwaterSolver):
                     
                     continue
                 
-                # === INTERIOR POINTS ===
+                # === INTERIOR POINTS WITH LAYER INTERFACE TREATMENT ===
                 
                 # Get permeabilities at interfaces (harmonic mean for heterogeneous media)
                 k_center = self.k_field[j, i]
                 
-                # Interface permeabilities with layer-aware harmonic mean
-                # This prevents numerical issues at layer boundaries
+                # Check if we're near a layer interface for special treatment
+                is_near_interface = False
+                interface_distance = float('inf')
+                
+                for layer in self.domain.soil_layers:
+                    layer_depth_idx = self.domain.depth_to_index(layer.depth_bottom)
+                    if abs(j - layer_depth_idx) <= 2:  # Within 2 cells of interface
+                        is_near_interface = True
+                        interface_distance = min(interface_distance, abs(j - layer_depth_idx))
+                
+                # Interface permeabilities with smooth transition
                 if i < nx-1:
-                    # Use arithmetic mean for small contrasts, harmonic for large
-                    k_ratio = k_center / (self.k_field[j, i+1] + 1e-15)
-                    if 0.1 < k_ratio < 10:  # Small contrast
+                    if is_near_interface:
+                        # Use arithmetic mean near interfaces for smoother transition
                         k_east = 0.5 * (k_center + self.k_field[j, i+1])
-                    else:  # Large contrast - use harmonic mean
+                    else:
                         k_east = harmonic_mean(k_center, self.k_field[j, i+1])
                 else:
                     k_east = k_center
                 
                 if i > 0:
-                    k_ratio = k_center / (self.k_field[j, i-1] + 1e-15)
-                    if 0.1 < k_ratio < 10:
+                    if is_near_interface:
                         k_west = 0.5 * (k_center + self.k_field[j, i-1])
                     else:
                         k_west = harmonic_mean(k_center, self.k_field[j, i-1])
@@ -375,18 +382,18 @@ class FDMSolver(GroundwaterSolver):
                     k_west = k_center
                 
                 if j > 0:
-                    k_ratio = k_center / (self.k_field[j-1, i] + 1e-15)
-                    if 0.1 < k_ratio < 10:
-                        k_north = 0.5 * (k_center + self.k_field[j-1, i])
+                    if is_near_interface:
+                        # Special treatment for vertical interface
+                        k_north = harmonic_mean(k_center, self.k_field[j-1, i])
                     else:
                         k_north = harmonic_mean(k_center, self.k_field[j-1, i])
                 else:
                     k_north = k_center
                 
                 if j < ny-1:
-                    k_ratio = k_center / (self.k_field[j+1, i] + 1e-15)
-                    if 0.1 < k_ratio < 10:
-                        k_south = 0.5 * (k_center + self.k_field[j+1, i])
+                    if is_near_interface:
+                        # Special treatment for vertical interface
+                        k_south = harmonic_mean(k_center, self.k_field[j+1, i])
                     else:
                         k_south = harmonic_mean(k_center, self.k_field[j+1, i])
                 else:
@@ -441,7 +448,62 @@ class FDMSolver(GroundwaterSolver):
         
         return self.H
     
-    def generate_flow_lines_from_stream_function(self, num_lines: int = 10) -> List[Tuple[np.ndarray, np.ndarray]]:
+    def verify_orthogonality(self) -> float:
+        """Verify orthogonality between equipotentials and flow lines
+        Returns average angle deviation from 90 degrees"""
+        if self.H is None or self.qx is None or self.qy is None:
+            return 0.0
+        
+        nx, ny = self.domain.nx, self.domain.ny
+        dx, dy = self.domain.dx, self.domain.dy
+        
+        angles = []
+        
+        # Sample points away from boundaries
+        for j in range(5, ny-5, 5):
+            for i in range(5, nx-5, 5):
+                # Calculate head gradient (perpendicular to equipotentials)
+                dh_dx = (self.H[j, i+1] - self.H[j, i-1]) / (2*dx)
+                dh_dy = (self.H[j+1, i] - self.H[j-1, i]) / (2*dy)
+                
+                # Velocity vector (tangent to flow lines)
+                vx = self.qx[j, i]
+                vy = self.qy[j, i]
+                
+                # Calculate angle between gradient and velocity
+                grad_mag = np.sqrt(dh_dx**2 + dh_dy**2)
+                vel_mag = np.sqrt(vx**2 + vy**2)
+                
+                if grad_mag > 1e-10 and vel_mag > 1e-10:
+                    # Dot product for angle calculation
+                    cos_angle = (dh_dx * vx + dh_dy * vy) / (grad_mag * vel_mag)
+                    # Should be near zero for orthogonal vectors
+                    angle = np.arccos(np.clip(abs(cos_angle), 0, 1)) * 180 / np.pi
+                    angles.append(abs(90 - angle))
+        
+        return np.mean(angles) if angles else 0.0
+    
+    def apply_layer_interface_refinement(self):
+        """Refine solution near layer interfaces to reduce clustering"""
+        if self.H is None:
+            return
+        
+        # Apply local smoothing near interfaces
+        from scipy.ndimage import gaussian_filter1d
+        
+        for layer in self.domain.soil_layers:
+            if 0 < layer.depth_bottom < self.domain.depth:
+                j_interface = self.domain.depth_to_index(layer.depth_bottom)
+                
+                # Apply smoothing in a narrow band around interface
+                for j_offset in range(-2, 3):
+                    j = j_interface + j_offset
+                    if 0 < j < self.domain.ny - 1:
+                        # Smooth along horizontal direction
+                        self.H[j, :] = gaussian_filter1d(self.H[j, :], sigma=0.5)
+        
+        # Recalculate velocities after smoothing
+        self.calculate_velocities()
         """Generate flow lines as contours of the stream function"""
         if self.psi is None:
             self.calculate_stream_function()
@@ -489,17 +551,162 @@ class FDMSolver(GroundwaterSolver):
         return flow_lines
     
     def generate_equipotentials(self, num_lines: int = 15) -> np.ndarray:
-        """Generate equipotential levels with proper spacing"""
+        """Generate equipotential levels avoiding clustering at layer interfaces"""
         if self.H is None:
             raise ValueError("Must solve for heads first")
         
-        # Get head range from the active flow region (exclude boundaries)
-        # This helps avoid clustering near constant head boundaries
-        h_active = self.H[5:-5, 5:-5]
-        h_min = np.percentile(h_active, 5)
-        h_max = np.percentile(h_active, 95)
+        # Get head statistics
+        h_min = np.min(self.H)
+        h_max = np.max(self.H)
         
-        # Generate evenly spaced levels
-        levels = np.linspace(h_min, h_max, num_lines)
+        # Method 1: Use percentile-based spacing to avoid boundary clustering
+        percentiles = np.linspace(5, 95, num_lines)
+        h_values = np.percentile(self.H.flatten(), percentiles)
         
-        return levels
+        # Method 2: Adaptive spacing based on gradient magnitude
+        # Areas with high gradients get more closely spaced lines
+        dh_dx = np.gradient(self.H, axis=1)
+        dh_dy = np.gradient(self.H, axis=0)
+        gradient_mag = np.sqrt(dh_dx**2 + dh_dy**2)
+        
+        # Weight the distribution based on gradient
+        gradient_weight = gradient_mag / np.max(gradient_mag)
+        
+        # Combine both methods for optimal spacing
+        if np.std(h_values) > 0:
+            # Use percentile-based if there's good variation
+            levels = h_values
+        else:
+            # Fall back to linear spacing
+            levels = np.linspace(h_min, h_max, num_lines)
+        
+        # Ensure unique levels and sort
+        levels = np.unique(levels)
+        if len(levels) < num_lines:
+            # Add more levels if needed
+            additional = np.linspace(h_min, h_max, num_lines - len(levels) + 2)[1:-1]
+            levels = np.sort(np.concatenate([levels, additional]))
+        
+        return levels[:num_lines]
+    
+    def verify_orthogonality(self) -> float:
+        """Verify orthogonality between equipotentials and flow lines
+        Returns average angle deviation from 90 degrees"""
+        if self.H is None or self.qx is None or self.qy is None:
+            return 0.0
+        
+        nx, ny = self.domain.nx, self.domain.ny
+        dx, dy = self.domain.dx, self.domain.dy
+        
+        angles = []
+        
+        # Sample points away from boundaries
+        for j in range(5, ny-5, 5):
+            for i in range(5, nx-5, 5):
+                # Calculate head gradient (perpendicular to equipotentials)
+                dh_dx = (self.H[j, i+1] - self.H[j, i-1]) / (2*dx)
+                dh_dy = (self.H[j+1, i] - self.H[j-1, i]) / (2*dy)
+                
+                # Velocity vector (tangent to flow lines)
+                vx = self.qx[j, i]
+                vy = self.qy[j, i]
+                
+                # Calculate angle between gradient and velocity
+                grad_mag = np.sqrt(dh_dx**2 + dh_dy**2)
+                vel_mag = np.sqrt(vx**2 + vy**2)
+                
+                if grad_mag > 1e-10 and vel_mag > 1e-10:
+                    # Dot product for angle calculation
+                    cos_angle = (dh_dx * vx + dh_dy * vy) / (grad_mag * vel_mag)
+                    # Should be near zero for orthogonal vectors
+                    angle = np.arccos(np.clip(abs(cos_angle), 0, 1)) * 180 / np.pi
+                    angles.append(abs(90 - angle))
+        
+        return np.mean(angles) if angles else 0.0
+    
+    def apply_layer_interface_refinement(self):
+        """Refine solution near layer interfaces to reduce clustering"""
+        if self.H is None:
+            return
+        
+        # Apply local smoothing near interfaces
+        from scipy.ndimage import gaussian_filter1d
+        
+        for layer in self.domain.soil_layers:
+            if 0 < layer.depth_bottom < self.domain.depth:
+                j_interface = self.domain.depth_to_index(layer.depth_bottom)
+                
+                # Apply smoothing in a narrow band around interface
+                for j_offset in range(-2, 3):
+                    j = j_interface + j_offset
+                    if 0 < j < self.domain.ny - 1:
+                        # Smooth along horizontal direction
+                        self.H[j, :] = gaussian_filter1d(self.H[j, :], sigma=0.5)
+        
+        # Recalculate velocities after smoothing
+        self.calculate_velocities()
+    
+    def calculate_stream_function_improved(self) -> np.ndarray:
+        """Calculate stream function with layer interface smoothing"""
+        if self.qx is None or self.qy is None:
+            self.calculate_velocities()
+        
+        nx, ny = self.domain.nx, self.domain.ny
+        dx, dy = self.domain.dx, self.domain.dy
+        
+        # Initialize stream function
+        psi = np.zeros((ny, nx))
+        
+        # Method 1: Line integral from reference point
+        # Start from bottom-left corner (reference psi=0)
+        
+        # First column: integrate upward using qx
+        for j in range(1, ny):
+            # Check if crossing layer interface
+            is_interface = False
+            for layer in self.domain.soil_layers:
+                layer_j = self.domain.depth_to_index(layer.depth_bottom)
+                if abs(j - layer_j) <= 1:
+                    is_interface = True
+                    break
+            
+            if is_interface:
+                # Use trapezoidal rule for smoother integration at interface
+                psi[j, 0] = psi[j-1, 0] + 0.5 * (self.qx[j, 0] + self.qx[j-1, 0]) * dy
+            else:
+                psi[j, 0] = psi[j-1, 0] + self.qx[j, 0] * dy
+        
+        # Remaining points: integrate horizontally using qy
+        for j in range(ny):
+            for i in range(1, nx):
+                # Check if near layer interface
+                is_interface = False
+                for layer in self.domain.soil_layers:
+                    layer_j = self.domain.depth_to_index(layer.depth_bottom)
+                    if abs(j - layer_j) <= 1:
+                        is_interface = True
+                        break
+                
+                if is_interface:
+                    # Use averaging for smoother stream function at interfaces
+                    psi[j, i] = psi[j, i-1] - 0.5 * (self.qy[j, i] + self.qy[j, i-1]) * dx
+                else:
+                    psi[j, i] = psi[j, i-1] - self.qy[j, i-1] * dx
+        
+        # Apply smoothing filter near layer interfaces
+        from scipy.ndimage import gaussian_filter
+        
+        # Create mask for interface regions
+        interface_mask = np.zeros((ny, nx), dtype=bool)
+        for layer in self.domain.soil_layers:
+            layer_j = self.domain.depth_to_index(layer.depth_bottom)
+            if 0 < layer_j < ny:
+                interface_mask[max(0, layer_j-2):min(ny, layer_j+3), :] = True
+        
+        # Apply light smoothing only at interfaces
+        if np.any(interface_mask):
+            psi_smooth = gaussian_filter(psi, sigma=0.5)
+            psi[interface_mask] = psi_smooth[interface_mask]
+        
+        self.psi = psi
+        return psi
