@@ -120,16 +120,42 @@ class Domain:
         self.excavation = excavation
     
     def get_permeability_at_point(self, x: float, y: float) -> float:
-        """Get hydraulic conductivity at a specific point"""
+        """Get hydraulic conductivity at a specific point with smooth layer transitions"""
         # Check if point is on a sheet pile
         for pile in self.sheet_piles:
             if abs(x - pile.x_position) < pile.thickness / 2:
                 if pile.top_depth <= y <= pile.bottom_depth:
                     return pile.permeability
         
-        # Otherwise get soil layer permeability
+        # Get soil layer permeability with smooth transition
         for layer in self.soil_layers:
             if layer.contains_depth(y):
+                # Check if near layer boundary for smoothing
+                transition_zone = 0.1  # 10cm transition zone
+                
+                # Near top boundary
+                if abs(y - layer.depth_top) < transition_zone and layer.depth_top > 0:
+                    # Find previous layer
+                    for prev_layer in self.soil_layers:
+                        if prev_layer.depth_bottom == layer.depth_top:
+                            # Smooth transition using weighted average
+                            weight = (y - layer.depth_top + transition_zone) / (2 * transition_zone)
+                            weight = max(0, min(1, weight))
+                            return (weight * layer.hydraulic_conductivity + 
+                                   (1 - weight) * prev_layer.hydraulic_conductivity)
+                
+                # Near bottom boundary
+                if abs(y - layer.depth_bottom) < transition_zone and layer.depth_bottom < self.depth:
+                    # Find next layer
+                    for next_layer in self.soil_layers:
+                        if next_layer.depth_top == layer.depth_bottom:
+                            # Smooth transition
+                            weight = (layer.depth_bottom - y + transition_zone) / (2 * transition_zone)
+                            weight = max(0, min(1, weight))
+                            return (weight * layer.hydraulic_conductivity + 
+                                   (1 - weight) * next_layer.hydraulic_conductivity)
+                
+                # Inside layer, away from boundaries
                 return layer.hydraulic_conductivity
         
         # Default if no layer found
