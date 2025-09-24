@@ -27,13 +27,15 @@ class FlowNetVisualizer:
                       num_flow_lines: int = 12,
                       show_mesh: bool = False,
                       show_velocity_vectors: bool = False,
-                      show_layers: bool = True,
                       figsize: Tuple[float, float] = (14, 10)) -> plt.Figure:
         """Create accurate flow net with orthogonal equipotentials and flow lines"""
         
-        # Ensure stream function is calculated
+        # Ensure stream function is calculated using improved method if available
         if self.solver.psi is None:
-            self.solver.calculate_stream_function()
+            if hasattr(self.solver, 'calculate_stream_function_improved'):
+                self.solver.calculate_stream_function_improved()
+            else:
+                self.solver.calculate_stream_function()
         
         # Prepare data
         X, Y = np.meshgrid(self.domain.x_coords, -self.domain.y_coords)  # Negative for depth display
@@ -44,10 +46,10 @@ class FlowNetVisualizer:
         ax = fig.add_subplot(111)
         
         # === EQUIPOTENTIAL LINES (constant head) ===
-        # Generate appropriate levels
+        # Generate appropriate levels without clustering
         h_levels = self.solver.generate_equipotentials(num_equipotentials)
         
-        # Plot equipotentials
+        # Plot equipotentials with varying line styles for better clarity
         cs_equi = ax.contour(X, Y, H, levels=h_levels, colors='blue', 
                             linewidths=1.5, alpha=0.9, linestyles='-')
         ax.clabel(cs_equi, inline=True, fontsize=9, fmt='h=%.2f')
@@ -55,11 +57,17 @@ class FlowNetVisualizer:
         # === FLOW LINES (from stream function) ===
         # Calculate stream function range
         psi = self.solver.psi
-        psi_min = np.min(psi)
-        psi_max = np.max(psi)
         
-        # Generate flow line levels
-        psi_levels = np.linspace(psi_min, psi_max, num_flow_lines + 2)[1:-1]
+        # Generate flow line levels avoiding clustering
+        psi_flat = psi.flatten()
+        psi_flat = psi_flat[~np.isnan(psi_flat)]  # Remove NaNs
+        
+        # Use percentile-based spacing for flow lines
+        percentiles = np.linspace(5, 95, num_flow_lines)
+        psi_levels = np.percentile(psi_flat, percentiles)
+        
+        # Ensure unique levels
+        psi_levels = np.unique(psi_levels)
         
         # Plot flow lines as contours of stream function
         X_psi, Y_psi = np.meshgrid(self.domain.x_coords, self.domain.y_coords)
@@ -351,7 +359,7 @@ class FlowNetVisualizer:
         
         return fig
     
-    def _add_enhanced_geometry(self, ax):
+    def _add_enhanced_geometry(self, ax, show_layers=True):
         """Add sheet piles, excavation, and other geometry with clear visualization"""
         
         # === SHEET PILES (highlighted clearly) ===
@@ -405,31 +413,15 @@ class FlowNetVisualizer:
                        'lightblue', linewidth=3, alpha=0.8,
                        label='Excavation water', zorder=5)
         
-        # === SOIL LAYER BOUNDARIES (show if requested) ===
-        if show_layers:
-            for i, layer in enumerate(self.domain.soil_layers):
-                if 0 < layer.depth_bottom < self.domain.depth:
-                    # Draw layer boundary with proper styling
-                    ax.axhline(y=-layer.depth_bottom, color='brown',
-                              linestyle='--', linewidth=1.2, alpha=0.6)
-                    
-                    # Add layer labels
-                    label_x = self.domain.width * 0.02
-                    label_y = -(layer.depth_top + layer.depth_bottom) / 2
-                    
-                    # Create background box for text
-                    ax.text(label_x, label_y, f' {layer.name} ',
-                           fontsize=8, color='brown', 
-                           bbox=dict(boxstyle='round,pad=0.2', 
-                                   facecolor='white', alpha=0.7),
-                           verticalalignment='center')
-                    
-                    # Add permeability value
-                    ax.text(label_x, label_y - 0.5, f' k={layer.hydraulic_conductivity:.1e} m/s ',
-                           fontsize=7, color='gray',
-                           bbox=dict(boxstyle='round,pad=0.2', 
-                                   facecolor='white', alpha=0.7),
-                           verticalalignment='center')
+        # === SOIL LAYER BOUNDARIES ===
+        for layer in self.domain.soil_layers:
+            if 0 < layer.depth_bottom < self.domain.depth:
+                ax.axhline(y=-layer.depth_bottom, color='brown',
+                          linestyle=':', linewidth=1.5, alpha=0.5)
+                # Add layer label
+                ax.text(self.domain.width * 0.95, -layer.depth_bottom + 0.2,
+                       f'{layer.name}', fontsize=8, ha='right',
+                       color='brown', alpha=0.7)
         
         # === WATER TABLE ===
         # Outside water level
