@@ -353,24 +353,42 @@ class FDMSolver(GroundwaterSolver):
                 # Get permeabilities at interfaces (harmonic mean for heterogeneous media)
                 k_center = self.k_field[j, i]
                 
-                # Interface permeabilities
+                # Interface permeabilities with layer-aware harmonic mean
+                # This prevents numerical issues at layer boundaries
                 if i < nx-1:
-                    k_east = harmonic_mean(k_center, self.k_field[j, i+1])
+                    # Use arithmetic mean for small contrasts, harmonic for large
+                    k_ratio = k_center / (self.k_field[j, i+1] + 1e-15)
+                    if 0.1 < k_ratio < 10:  # Small contrast
+                        k_east = 0.5 * (k_center + self.k_field[j, i+1])
+                    else:  # Large contrast - use harmonic mean
+                        k_east = harmonic_mean(k_center, self.k_field[j, i+1])
                 else:
                     k_east = k_center
                 
                 if i > 0:
-                    k_west = harmonic_mean(k_center, self.k_field[j, i-1])
+                    k_ratio = k_center / (self.k_field[j, i-1] + 1e-15)
+                    if 0.1 < k_ratio < 10:
+                        k_west = 0.5 * (k_center + self.k_field[j, i-1])
+                    else:
+                        k_west = harmonic_mean(k_center, self.k_field[j, i-1])
                 else:
                     k_west = k_center
                 
                 if j > 0:
-                    k_north = harmonic_mean(k_center, self.k_field[j-1, i])
+                    k_ratio = k_center / (self.k_field[j-1, i] + 1e-15)
+                    if 0.1 < k_ratio < 10:
+                        k_north = 0.5 * (k_center + self.k_field[j-1, i])
+                    else:
+                        k_north = harmonic_mean(k_center, self.k_field[j-1, i])
                 else:
                     k_north = k_center
                 
                 if j < ny-1:
-                    k_south = harmonic_mean(k_center, self.k_field[j+1, i])
+                    k_ratio = k_center / (self.k_field[j+1, i] + 1e-15)
+                    if 0.1 < k_ratio < 10:
+                        k_south = 0.5 * (k_center + self.k_field[j+1, i])
+                    else:
+                        k_south = harmonic_mean(k_center, self.k_field[j+1, i])
                 else:
                     k_south = k_center
                 
