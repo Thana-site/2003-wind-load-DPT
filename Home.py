@@ -1,5 +1,5 @@
 """
-app.py - Streamlit application for interactive flow net analysis
+app.py - Streamlit application for flow net analysis with corrected layer interfaces
 """
 
 import streamlit as st
@@ -44,9 +44,12 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+# CONSTANTS
+MAX_DOMAIN_DEPTH = 20.0  # Maximum analysis depth limited to 20 meters
+MIN_LAYER_THICKNESS = 0.5  # Minimum thickness for a soil layer
 
 def initialize_session_state():
-    """Initialize session state variables"""
+    """Initialize session state variables with proper defaults"""
     if 'domain' not in st.session_state:
         st.session_state.domain = None
     if 'solver' not in st.session_state:
@@ -54,192 +57,292 @@ def initialize_session_state():
     if 'results' not in st.session_state:
         st.session_state.results = None
     if 'soil_layers' not in st.session_state:
+        # Initialize with depth ranges for soil layers
         st.session_state.soil_layers = [
-            {"name": "Sand", "depth_top": 0.0, "depth_bottom": 5.0, 
-             "hydraulic_conductivity": 1e-5, "porosity": 0.3},
-            {"name": "Clay", "depth_top": 5.0, "depth_bottom": 15.0, 
-             "hydraulic_conductivity": 1e-6, "porosity": 0.4}
+            {"name": "Sand", "depth_from": 0.0, "depth_to": 5.0, 
+             "hydraulic_conductivity": 1e-5, "porosity": 0.35},
+            {"name": "Clay", "depth_from": 5.0, "depth_to": 12.0, 
+             "hydraulic_conductivity": 1e-7, "porosity": 0.45},
+            {"name": "Gravel", "depth_from": 12.0, "depth_to": 20.0,
+             "hydraulic_conductivity": 1e-3, "porosity": 0.30}
         ]
     if 'last_run_params' not in st.session_state:
         st.session_state.last_run_params = None
 
 
+def validate_and_adjust_depth(value, min_val, max_val):
+    """Validate and adjust depth values to prevent errors"""
+    try:
+        val = float(value)
+        return max(min_val, min(val, max_val))
+    except:
+        return min_val
+
+
 def create_sidebar():
-    """Create sidebar with input parameters"""
+    """Create sidebar with corrected input validation"""
     st.sidebar.header("⚙️ Model Configuration")
     
-    # Collapsible sections
-    with st.sidebar.expander("📐 Geometry", expanded=True):
+    # Domain Configuration
+    with st.sidebar.expander("📐 Domain Geometry", expanded=True):
         col1, col2 = st.columns(2)
         
         with col1:
             domain_width = st.number_input(
                 "Domain Width (m)", 
-                min_value=10.0, max_value=100.0, value=40.0, step=5.0,
+                min_value=10.0, 
+                max_value=100.0, 
+                value=40.0, 
+                step=5.0,
                 help="Total width of the analysis domain"
             )
+            
+            # Enforce maximum depth of 20m
             domain_depth = st.number_input(
                 "Domain Depth (m)", 
-                min_value=5.0, max_value=50.0, value=15.0, step=1.0,
-                help="Total depth of the analysis domain"
+                min_value=5.0, 
+                max_value=MAX_DOMAIN_DEPTH,  # Limited to 20m
+                value=15.0, 
+                step=1.0,
+                help=f"Total depth of the analysis domain (max {MAX_DOMAIN_DEPTH}m)"
             )
         
         with col2:
+            # Sheet pile length cannot exceed domain depth
+            max_pile_length = min(domain_depth - 0.5, MAX_DOMAIN_DEPTH - 0.5)
             sheet_pile_length = st.number_input(
                 "Sheet Pile Length (m)", 
-                min_value=2.0, max_value=30.0, value=10.0, step=1.0,
-                help="Total length of sheet pile from surface"
+                min_value=2.0, 
+                max_value=max_pile_length,
+                value=min(10.0, max_pile_length), 
+                step=0.5,
+                help=f"Total length of sheet pile from surface (max {max_pile_length:.1f}m)"
             )
+            
+            # Excavation depth must be less than sheet pile length
+            max_excavation_depth = min(sheet_pile_length - 1.0, domain_depth - 1.0)
             excavation_depth = st.number_input(
                 "Excavation Depth (m)", 
-                min_value=1.0, max_value=min(sheet_pile_length - 1, 20.0), 
-                value=6.0, step=0.5,
-                help="Depth of excavation below ground surface"
+                min_value=1.0, 
+                max_value=max_excavation_depth,
+                value=min(6.0, max_excavation_depth), 
+                step=0.5,
+                help=f"Depth of excavation below ground (max {max_excavation_depth:.1f}m)"
             )
         
         excavation_width = st.number_input(
             "Excavation Width (m)", 
-            min_value=2.0, max_value=domain_width - 10, value=10.0, step=1.0,
+            min_value=2.0, 
+            max_value=domain_width - 10.0, 
+            value=min(10.0, domain_width - 10.0), 
+            step=1.0,
             help="Width between sheet piles"
         )
     
+    # Water Levels Configuration
     with st.sidebar.expander("💧 Water Levels", expanded=True):
         water_level_outside = st.number_input(
-            "Water Level Outside (m below GL)", 
-            min_value=0.0, max_value=excavation_depth, value=2.0, step=0.5,
+            "Water Table Depth (m below ground)", 
+            min_value=0.0, 
+            max_value=min(excavation_depth, domain_depth/2),
+            value=2.0, 
+            step=0.5,
             help="Groundwater level outside excavation"
         )
         
         water_inside_type = st.radio(
             "Excavation Condition",
-            ["Dewatered (Dry)", "Partially Filled", "Fully Filled"],
+            ["Dewatered (Dry)", "Partially Filled", "Natural Water Table"],
             help="Water condition inside excavation"
         )
         
         if water_inside_type == "Partially Filled":
             water_level_inside = st.number_input(
-                "Water Level Inside (m below GL)", 
+                "Water Level Inside (m below ground)", 
                 min_value=excavation_depth * 0.5, 
                 max_value=excavation_depth, 
-                value=excavation_depth - 1.0, 
+                value=min(excavation_depth - 1.0, excavation_depth * 0.75), 
                 step=0.5
             )
-        elif water_inside_type == "Fully Filled":
+        elif water_inside_type == "Natural Water Table":
             water_level_inside = water_level_outside
         else:  # Dewatered
             water_level_inside = excavation_depth
     
-    with st.sidebar.expander("🪨 Soil Layers", expanded=False):
-        st.write("Define soil layers from top to bottom:")
+    # Soil Layers Configuration with Depth Ranges
+    with st.sidebar.expander("🪨 Soil Layers (Depth Ranges)", expanded=False):
+        st.write("Define soil layers by depth ranges (max depth: 20m):")
         
+        # Dynamic number of layers
         num_layers = st.number_input(
             "Number of Layers", 
-            min_value=1, max_value=5, value=2, step=1
+            min_value=1, 
+            max_value=5, 
+            value=min(3, len(st.session_state.soil_layers)),
+            step=1
         )
         
         soil_layers = []
-        previous_bottom = 0.0
+        current_depth = 0.0
         
         for i in range(num_layers):
             st.write(f"**Layer {i+1}**")
+            
+            # Get previous values if they exist
+            if i < len(st.session_state.soil_layers):
+                prev_layer = st.session_state.soil_layers[i]
+                default_name = prev_layer["name"]
+                default_k = prev_layer["hydraulic_conductivity"]
+                default_porosity = prev_layer["porosity"]
+                default_to = min(prev_layer["depth_to"], domain_depth)
+            else:
+                default_name = f"Layer {i+1}"
+                default_k = 1e-6
+                default_porosity = 0.35
+                default_to = min(current_depth + 5.0, domain_depth)
+            
             col1, col2 = st.columns(2)
             
             with col1:
                 name = st.text_input(
                     f"Name", 
-                    value=st.session_state.soil_layers[i]["name"] if i < len(st.session_state.soil_layers) else f"Layer {i+1}",
+                    value=default_name,
                     key=f"layer_name_{i}"
                 )
-                k = st.number_input(
-                    f"K (m/s)", 
-                    min_value=1e-12, max_value=1e-2, 
-                    value=st.session_state.soil_layers[i]["hydraulic_conductivity"] if i < len(st.session_state.soil_layers) else 1e-6,
-                    format="%.2e", key=f"layer_k_{i}"
+                
+                # Display depth from (read-only)
+                st.text(f"From: {current_depth:.1f} m")
+                
+                # Depth to
+                max_depth_to = min(domain_depth, MAX_DOMAIN_DEPTH)
+                min_depth_to = current_depth + MIN_LAYER_THICKNESS
+                
+                depth_to = st.number_input(
+                    f"To (m)", 
+                    min_value=min_depth_to,
+                    max_value=max_depth_to,
+                    value=min(max(default_to, min_depth_to), max_depth_to),
+                    step=0.5,
+                    key=f"layer_to_{i}",
+                    help=f"Layer extends from {current_depth:.1f}m to this depth"
                 )
             
             with col2:
-                depth_top = previous_bottom
-                # Calculate default value ensuring it's within bounds
-                if i < len(st.session_state.soil_layers):
-                    default_bottom = st.session_state.soil_layers[i]["depth_bottom"]
-                else:
-                    default_bottom = depth_top + 5.0
+                # Hydraulic conductivity with scientific notation
+                k_options = {
+                    "Gravel (1e-3 m/s)": 1e-3,
+                    "Coarse Sand (1e-4 m/s)": 1e-4,
+                    "Fine Sand (1e-5 m/s)": 1e-5,
+                    "Silt (1e-6 m/s)": 1e-6,
+                    "Sandy Clay (1e-7 m/s)": 1e-7,
+                    "Clay (1e-8 m/s)": 1e-8,
+                    "Dense Clay (1e-9 m/s)": 1e-9,
+                    "Custom": None
+                }
                 
-                # Ensure value is within min/max bounds
-                default_bottom = max(depth_top + 0.5, min(default_bottom, domain_depth))
-                
-                depth_bottom = st.number_input(
-                    f"Bottom (m)", 
-                    min_value=depth_top + 0.5, 
-                    max_value=domain_depth,
-                    value=float(default_bottom),
-                    step=0.5, key=f"layer_bottom_{i}"
+                k_selection = st.selectbox(
+                    f"Hydraulic Conductivity",
+                    options=list(k_options.keys()),
+                    index=3,  # Default to Silt
+                    key=f"layer_k_select_{i}"
                 )
-                porosity = st.number_input(
+                
+                if k_selection == "Custom":
+                    k = st.number_input(
+                        f"K (m/s)", 
+                        min_value=1e-12, 
+                        max_value=1e-2, 
+                        value=default_k,
+                        format="%.2e", 
+                        key=f"layer_k_custom_{i}"
+                    )
+                else:
+                    k = k_options[k_selection]
+                
+                porosity = st.slider(
                     f"Porosity", 
-                    min_value=0.1, max_value=0.6, 
-                    value=st.session_state.soil_layers[i]["porosity"] if i < len(st.session_state.soil_layers) else 0.3,
-                    step=0.05, key=f"layer_porosity_{i}"
+                    min_value=0.1, 
+                    max_value=0.6, 
+                    value=default_porosity,
+                    step=0.05, 
+                    key=f"layer_porosity_{i}"
                 )
             
             soil_layers.append({
                 "name": name,
-                "depth_top": depth_top,
-                "depth_bottom": depth_bottom,
+                "depth_from": current_depth,
+                "depth_to": depth_to,
                 "hydraulic_conductivity": k,
                 "porosity": porosity
             })
             
-            previous_bottom = depth_bottom
+            current_depth = depth_to
             
+            # Add layer transition note
             if i < num_layers - 1:
+                st.info(f"Layer interface at {depth_to:.1f}m")
                 st.divider()
+        
+        # Check if layers cover entire domain
+        if current_depth < domain_depth:
+            st.warning(f"⚠️ Layers only extend to {current_depth:.1f}m. Domain is {domain_depth:.1f}m deep.")
+            # Add a default layer to fill the gap
+            soil_layers.append({
+                "name": "Base Layer",
+                "depth_from": current_depth,
+                "depth_to": domain_depth,
+                "hydraulic_conductivity": 1e-8,
+                "porosity": 0.40
+            })
         
         st.session_state.soil_layers = soil_layers
     
+    # Numerical Settings
     with st.sidebar.expander("🔢 Numerical Settings", expanded=False):
         col1, col2 = st.columns(2)
         
         with col1:
-            nx = st.number_input(
-                "Grid Points (X)", 
-                min_value=51, max_value=501, value=201, step=50,
+            nx = st.selectbox(
+                "Grid Resolution (X)", 
+                options=[101, 151, 201, 251, 301],
+                index=2,
                 help="Number of grid points in horizontal direction"
             )
         
         with col2:
-            ny = st.number_input(
-                "Grid Points (Y)", 
-                min_value=51, max_value=501, value=151, step=50,
+            ny = st.selectbox(
+                "Grid Resolution (Y)", 
+                options=[101, 151, 201, 251, 301],
+                index=1,
                 help="Number of grid points in vertical direction"
             )
         
+        st.info(f"Total grid points: {nx * ny:,}")
+        
         solver_type = st.selectbox(
             "Solver Method",
-            ["Finite Difference Method (FDM)", "Finite Element Method (FEM)"],
+            ["Finite Difference Method (FDM)"],
             help="Numerical method for solving flow equations"
         )
     
     st.sidebar.divider()
     
-    # Run analysis button
+    # Run Analysis Button
     run_button = st.sidebar.button(
         "🚀 Run Analysis", 
         type="primary", 
         use_container_width=True
     )
     
-    # Export options
+    # Export Options
     with st.sidebar.expander("💾 Export Options", expanded=False):
         col1, col2 = st.columns(2)
-        
         with col1:
             export_csv = st.button("📊 Export CSV", use_container_width=True)
-        
         with col2:
-            export_plots = st.button("📈 Export Plots", use_container_width=True)
+            export_plots = st.button("📈 Save Plots", use_container_width=True)
     
-    # Return parameters
+    # Return all parameters
     params = {
         'domain_width': domain_width,
         'domain_depth': domain_depth,
@@ -261,16 +364,27 @@ def create_sidebar():
 
 
 def run_analysis(params):
-    """Run the flow net analysis with given parameters"""
+    """Run the flow net analysis with corrected layer handling"""
     
     # Create progress indicator
     progress_bar = st.progress(0)
     status_text = st.empty()
     
     try:
-        # Step 1: Create domain
-        status_text.text("Creating domain geometry...")
+        # Step 1: Create domain with proper layer conversion
+        status_text.text("Creating domain geometry with soil layers...")
         progress_bar.progress(15)
+        
+        # Convert depth range format to depth_top/depth_bottom format
+        soil_layers_config = []
+        for layer in params['soil_layers']:
+            soil_layers_config.append({
+                "name": layer["name"],
+                "depth_top": layer["depth_from"],
+                "depth_bottom": layer["depth_to"],
+                "hydraulic_conductivity": layer["hydraulic_conductivity"],
+                "porosity": layer["porosity"]
+            })
         
         domain = create_cofferdam_domain(
             sheet_pile_length=params['sheet_pile_length'],
@@ -280,7 +394,7 @@ def run_analysis(params):
             domain_depth=params['domain_depth'],
             water_level_outside=params['water_level_outside'],
             water_level_inside=params['water_level_inside'],
-            soil_layers_config=params['soil_layers']
+            soil_layers_config=soil_layers_config
         )
         
         # Update grid resolution
@@ -297,11 +411,10 @@ def run_analysis(params):
             for warning in warnings:
                 st.warning(warning)
         
-        # Step 3: Create and run solver
-        status_text.text("Solving Laplace equation for seepage...")
+        # Step 3: Create and run solver with layer-aware formulation
+        status_text.text("Solving Laplace equation with layer interfaces...")
         progress_bar.progress(40)
         
-        # Use corrected FDM solver
         solver = FDMSolver(domain)
         H = solver.solve()
         
@@ -311,14 +424,14 @@ def run_analysis(params):
         
         qx, qy = solver.calculate_velocities()
         
-        # Step 5: Calculate stream function for flow lines
-        status_text.text("Calculating stream function...")
+        # Step 5: Calculate stream function
+        status_text.text("Calculating stream function for flow lines...")
         progress_bar.progress(75)
         
         psi = solver.calculate_stream_function()
         
         # Step 6: Calculate results
-        status_text.text("Computing seepage quantities and gradients...")
+        status_text.text("Computing seepage quantities and exit gradients...")
         progress_bar.progress(90)
         
         seepage = solver.calculate_seepage_discharge()
@@ -328,7 +441,7 @@ def run_analysis(params):
         progress_bar.progress(100)
         status_text.text("Analysis complete! ✓")
         
-        # Store results in session state
+        # Store results
         st.session_state.domain = domain
         st.session_state.solver = solver
         st.session_state.results = {
@@ -341,7 +454,7 @@ def run_analysis(params):
         }
         st.session_state.last_run_params = params
         
-        # Clear progress indicators after short delay
+        # Clear progress indicators
         import time
         time.sleep(0.5)
         progress_bar.empty()
@@ -354,12 +467,13 @@ def run_analysis(params):
         status_text.empty()
         st.error(f"Analysis failed: {str(e)}")
         import traceback
-        st.code(traceback.format_exc())
+        with st.expander("Show error details"):
+            st.code(traceback.format_exc())
         return False
 
 
 def display_results():
-    """Display analysis results"""
+    """Display analysis results with layer-aware visualization"""
     
     if st.session_state.solver is None:
         st.info("👈 Configure parameters and click 'Run Analysis' to start")
@@ -368,7 +482,7 @@ def display_results():
     # Create visualizer
     viz = FlowNetVisualizer(st.session_state.domain, st.session_state.solver)
     
-    # Tabs for different views
+    # Create tabs for different views
     tab1, tab2, tab3, tab4, tab5 = st.tabs([
         "📊 Dashboard", 
         "🌊 Flow Net", 
@@ -389,14 +503,17 @@ def display_results():
             st.metric(
                 "Total Seepage", 
                 f"{abs(results['seepage'].get('excavation_bottom', 0)):.2e} m³/s/m",
-                help="Seepage flow rate per unit width"
+                help="Seepage flow rate through excavation bottom"
             )
         
         with col2:
+            safety_factor = results['gradients']['safety_factor']
             st.metric(
                 "Safety Factor", 
-                f"{results['gradients']['safety_factor']:.2f}",
-                help="Against piping failure (>1.5 is safe)"
+                f"{safety_factor:.2f}",
+                delta="Safe" if safety_factor > 1.5 else "Check Required",
+                delta_color="normal" if safety_factor > 1.5 else "inverse",
+                help="Against piping failure (should be > 1.5)"
             )
         
         with col3:
@@ -407,10 +524,13 @@ def display_results():
             )
         
         with col4:
+            mass_error = results['seepage']['mass_balance_error']
             st.metric(
-                "Mass Balance Error", 
-                f"{results['seepage']['mass_balance_error']:.1f}%",
-                help="Numerical accuracy check (<2% is good)"
+                "Mass Balance", 
+                f"{mass_error:.1f}%",
+                delta="Good" if mass_error < 2 else "Check Grid",
+                delta_color="normal" if mass_error < 2 else "inverse",
+                help="Numerical accuracy (<2% is good)"
             )
         
         # Dashboard plot
@@ -433,22 +553,23 @@ def display_results():
                 min_value=5, max_value=25, value=12, step=1,
                 help="Number of stream function contours"
             )
+            show_layers = st.checkbox("Show Layer Boundaries", value=True,
+                                     help="Display soil layer interfaces")
             show_vectors = st.checkbox("Show Velocity Vectors", value=False,
                                       help="Overlay velocity arrows")
-            show_mesh = st.checkbox("Show Grid", value=False,
-                                  help="Display computational mesh")
             
             st.divider()
-            st.info("The flow net shows orthogonal pattern with:\n"
+            st.info("Flow net properties:\n"
                    "• Blue: Equipotentials (const. head)\n"
-                   "• Red: Flow lines (streamlines)")
+                   "• Red: Flow lines (orthogonal)\n"
+                   "• Brown dashed: Layer interfaces")
         
         with col1:
             fig = viz.plot_flow_net(
                 num_equipotentials=num_equipotentials,
                 num_flow_lines=num_flow_lines,
                 show_velocity_vectors=show_vectors,
-                show_mesh=show_mesh,
+                show_layers=show_layers,
                 figsize=(12, 8)
             )
             st.pyplot(fig)
@@ -459,12 +580,23 @@ def display_results():
         col1, col2 = st.columns([3, 1])
         
         with col2:
-            st.write("**Statistics**")
+            st.write("**Head Statistics**")
             H = results['H']
-            st.write(f"Min Head: {np.min(H):.2f} m")
-            st.write(f"Max Head: {np.max(H):.2f} m")
-            st.write(f"Mean Head: {np.mean(H):.2f} m")
-            st.write(f"Std Dev: {np.std(H):.2f} m")
+            stats_df = pd.DataFrame({
+                'Statistic': ['Min', 'Max', 'Mean', 'Std Dev'],
+                'Value (m)': [f"{np.min(H):.2f}", 
+                             f"{np.max(H):.2f}",
+                             f"{np.mean(H):.2f}",
+                             f"{np.std(H):.3f}"]
+            })
+            st.dataframe(stats_df, hide_index=True, use_container_width=True)
+            
+            st.divider()
+            st.write("**Layer Properties**")
+            for layer in st.session_state.soil_layers:
+                st.write(f"**{layer['name']}**")
+                st.write(f"Depth: {layer['depth_from']:.1f} - {layer['depth_to']:.1f} m")
+                st.write(f"K: {layer['hydraulic_conductivity']:.1e} m/s")
         
         with col1:
             st.pyplot(viz.plot_hydraulic_head(figsize=(12, 8)))
@@ -477,9 +609,21 @@ def display_results():
         with col2:
             st.write("**Velocity Statistics**")
             v_mag = np.sqrt(results['qx']**2 + results['qy']**2)
-            st.write(f"Max Velocity: {np.max(v_mag):.2e} m/s")
-            st.write(f"Mean Velocity: {np.mean(v_mag):.2e} m/s")
-            st.write(f"Min Velocity: {np.min(v_mag[v_mag > 0]):.2e} m/s")
+            v_nonzero = v_mag[v_mag > 1e-15]
+            
+            stats_df = pd.DataFrame({
+                'Statistic': ['Maximum', 'Mean', 'Median'],
+                'Velocity (m/s)': [f"{np.max(v_mag):.2e}", 
+                                  f"{np.mean(v_nonzero):.2e}",
+                                  f"{np.median(v_nonzero):.2e}"]
+            })
+            st.dataframe(stats_df, hide_index=True, use_container_width=True)
+            
+            st.divider()
+            st.write("**Flow Concentration Zones**")
+            # Identify high velocity zones
+            high_v_threshold = np.percentile(v_nonzero, 90)
+            st.info(f"90th percentile: {high_v_threshold:.2e} m/s")
         
         with col1:
             st.pyplot(viz.plot_velocity_field(figsize=(12, 8)))
@@ -491,38 +635,43 @@ def display_results():
         
         with col1:
             st.write("**Seepage Flow Rates**")
-            seepage_df = pd.DataFrame(
-                [(k.replace('_', ' ').title(), f"{v:.6e}" if 'error' not in k else f"{v:.2f}%") 
-                 for k, v in results['seepage'].items()],
-                columns=["Parameter", "Value"]
-            )
-            st.dataframe(seepage_df, use_container_width=True)
+            seepage_data = []
+            for key, value in results['seepage'].items():
+                if 'error' not in key:
+                    seepage_data.append({
+                        'Location': key.replace('_', ' ').title(),
+                        'Flow Rate': f"{value:.4e} m³/s/m"
+                    })
+            seepage_df = pd.DataFrame(seepage_data)
+            st.dataframe(seepage_df, hide_index=True, use_container_width=True)
+            
+            st.write("**Continuity Check**")
+            st.info(f"Mass balance error: {results['seepage']['mass_balance_error']:.2f}%")
         
         with col2:
-            st.write("**Exit Gradients**")
-            gradient_df = pd.DataFrame(
-                [(k.replace('_', ' ').title(), f"{v:.4f}") 
-                 for k, v in results['gradients'].items()],
-                columns=["Location", "Gradient"]
-            )
-            st.dataframe(gradient_df, use_container_width=True)
-        
-        # Domain configuration
-        st.write("**Domain Configuration**")
-        config_data = {
-            "Domain Width": f"{st.session_state.domain.width} m",
-            "Domain Depth": f"{st.session_state.domain.depth} m",
-            "Grid Resolution": f"{st.session_state.domain.nx} × {st.session_state.domain.ny}",
-            "Sheet Pile Length": f"{st.session_state.last_run_params['sheet_pile_length']} m",
-            "Excavation Depth": f"{st.session_state.last_run_params['excavation_depth']} m",
-            "Excavation Width": f"{st.session_state.last_run_params['excavation_width']} m"
-        }
-        config_df = pd.DataFrame(list(config_data.items()), columns=["Parameter", "Value"])
-        st.dataframe(config_df, use_container_width=True)
+            st.write("**Exit Gradient Analysis**")
+            gradient_data = []
+            for key, value in results['gradients'].items():
+                if not any(x in key for x in ['critical', 'safety']):
+                    gradient_data.append({
+                        'Location': key.replace('_', ' ').title(),
+                        'Gradient': f"{value:.4f}"
+                    })
+            gradient_df = pd.DataFrame(gradient_data)
+            st.dataframe(gradient_df, hide_index=True, use_container_width=True)
+            
+            st.write("**Safety Assessment**")
+            col2a, col2b = st.columns(2)
+            with col2a:
+                st.metric("Critical Gradient", 
+                         f"{results['gradients']['critical_gradient']:.3f}")
+            with col2b:
+                st.metric("Safety Factor", 
+                         f"{results['gradients']['safety_factor']:.2f}")
 
 
 def handle_exports(params):
-    """Handle export functions"""
+    """Handle export functionality"""
     
     if params['export_csv'] and st.session_state.solver is not None:
         viz = FlowNetVisualizer(st.session_state.domain, st.session_state.solver)
@@ -538,17 +687,13 @@ def handle_exports(params):
                     file_name=filename,
                     mime='text/csv'
                 )
-            os.remove(filename)  # Clean up
+            os.remove(filename)
             st.success("CSV export ready for download!")
         except Exception as e:
             st.error(f"Export failed: {str(e)}")
     
     if params['export_plots'] and st.session_state.solver is not None:
-        viz = FlowNetVisualizer(st.session_state.domain, st.session_state.solver)
-        
-        # Create a zip file with all plots
-        # (Implementation would require additional libraries like zipfile)
-        st.info("Plot export feature - would save all visualizations as PNG files")
+        st.info("Use right-click → 'Save image as...' on any plot to save it")
 
 
 def main():
@@ -556,7 +701,23 @@ def main():
     
     # Page header
     st.title("💧 Flow Net Analysis Tool")
-    st.markdown("**Interactive groundwater flow analysis for sheet pile excavations**")
+    st.markdown("**Multi-layered soil seepage analysis with accurate flow net generation**")
+    
+    # Information box
+    with st.expander("ℹ️ About This Tool"):
+        st.markdown("""
+        This application performs seepage analysis for excavations with sheet piles in layered soils.
+        
+        **Key Features:**
+        - Handles multiple soil layers with different permeabilities
+        - Generates orthogonal flow nets (equipotentials ⊥ flow lines)
+        - Calculates safety factors against piping failure
+        - Maximum analysis depth: 20 meters
+        
+        **Theory References:**
+        - [Flow Net Construction](https://www.geoengineer.org/education/online-lecture-notes-on-soil-mechanics/33-graphical-generation-of-flow-nets)
+        - [Seepage Analysis](https://elementaryengineeringlibrary.com/civil-engineering/soil-mechanics/flow-net/)
+        """)
     
     # Initialize session state
     initialize_session_state()
@@ -566,7 +727,7 @@ def main():
     
     # Run analysis if requested
     if params['run_analysis']:
-        with st.spinner("Running analysis..."):
+        with st.spinner("Running seepage analysis..."):
             success = run_analysis(params)
             if success:
                 st.success("✅ Analysis completed successfully!")
@@ -582,9 +743,9 @@ def main():
     st.divider()
     st.markdown(
         """
-        <div style='text-align: center; color: gray;'>
-        Flow Net Analysis Tool v1.0 | Built with Streamlit & Python<br>
-        For educational and engineering analysis purposes
+        <div style='text-align: center; color: gray; font-size: 0.9em;'>
+        Flow Net Analysis Tool v2.0 | Streamlit + Python<br>
+        For educational and engineering analysis | Max depth: 20m
         </div>
         """, 
         unsafe_allow_html=True
