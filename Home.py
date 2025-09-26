@@ -67,6 +67,25 @@ st.markdown("""
         padding: 1rem;
         margin: 0.5rem 0;
     }
+    .tension-warning {
+        background-color: #ffe6e6;
+        border: 2px solid #ff0000;
+        border-radius: 10px;
+        padding: 1.5rem;
+        margin: 1rem 0;
+    }
+    .properties-table {
+        background-color: #f0f8ff;
+        padding: 1rem;
+        border-radius: 10px;
+        margin: 1rem 0;
+    }
+    .critical-load {
+        background-color: #fffacd;
+        padding: 0.5rem;
+        border-left: 4px solid #ffa500;
+        margin: 0.5rem 0;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -85,6 +104,10 @@ if 'node_assignments' not in st.session_state:
     st.session_state.node_assignments = {}
 if 'allowed_foundations' not in st.session_state:
     st.session_state.allowed_foundations = []
+if 'tension_nodes' not in st.session_state:
+    st.session_state.tension_nodes = []
+if 'foundation_properties' not in st.session_state:
+    st.session_state.foundation_properties = {}
 
 # ===================== DEFAULT CONFIGURATIONS =====================
 DEFAULT_FOUNDATIONS = {
@@ -124,6 +147,20 @@ DEFAULT_FOUNDATIONS = {
 DEFAULT_NODES = [789, 790, 791, 4561, 4572, 4576, 4581, 4586, 4627, 4632, 4637,
                 4657, 4663, 4748, 4749, 4752, 4827, 4831, 5568, 5569, 5782, 5784,
                 7446, 7447, 7448, 7453, 7461, 7464]
+
+# Load combination patterns
+LOAD_COMBINATIONS = {
+    'cLCB1': '1.0DL',
+    'cLCB2': '1.0DL + 1.0LL',
+    'cLCB3': '1.0DL + 0.75LL + 0.75WL',
+    'cLCB4': '1.0DL + 1.0WL',
+    'cLCB5': '1.2DL + 1.6LL',
+    'cLCB6': '1.2DL + 1.0LL + 1.0WL',
+    'cLCB7': '1.2DL + 0.5LL + 1.3WL',
+    'cLCB8': '0.9DL + 1.3WL',
+    'cLCB9': '1.2DL + 1.0LL + 1.0EQ',
+    'cLCB10': '0.9DL + 1.0EQ'
+}
 
 # ===================== ANALYZER CLASS =====================
 class PileAnalyzer:
@@ -170,20 +207,34 @@ class PileAnalyzer:
         y_coords = coords[:, 1] - centroid_y
         
         # Calculate moment of inertia
-        Ixx = np.sum(x_coords**2)
-        Iyy = np.sum(y_coords**2)
+        Ixx = np.sum(y_coords**2)
+        Iyy = np.sum(x_coords**2)
         
-        # Maximum distances
-        xmax = np.max(np.abs(x_coords)) if len(x_coords) > 0 else 1.0
-        ymax = np.max(np.abs(y_coords)) if len(y_coords) > 0 else 1.0
+        # Maximum distances (c values)
+        cx_max = np.max(np.abs(x_coords)) if len(x_coords) > 0 else 1.0
+        cy_max = np.max(np.abs(y_coords)) if len(y_coords) > 0 else 1.0
         
         # Prevent division by zero
-        xmax = max(xmax, 0.1)
-        ymax = max(ymax, 0.1)
+        cx_max = max(cx_max, 0.1)
+        cy_max = max(cy_max, 0.1)
         
         # Section modulus
-        Zx = Ixx / ymax
-        Zy = Iyy / xmax
+        Zx = Ixx / cy_max if cy_max > 0 else 1
+        Zy = Iyy / cx_max if cx_max > 0 else 1
+        
+        # Store in session state for display
+        st.session_state.foundation_properties[foundation_id] = {
+            'n_piles': n_piles,
+            'Ixx': Ixx,
+            'Iyy': Iyy,
+            'cx_max': cx_max,
+            'cy_max': cy_max,
+            'Zx': Zx,
+            'Zy': Zy,
+            'coords': coords.tolist(),
+            'pile_spacing': self.pile_spacing,
+            'centroid': (centroid_x, centroid_y)
+        }
         
         return {
             'n_piles': n_piles,
@@ -191,13 +242,13 @@ class PileAnalyzer:
             'Iyy': Iyy,
             'Zx': Zx,
             'Zy': Zy,
-            'xmax': xmax,
-            'ymax': ymax,
+            'cx_max': cx_max,
+            'cy_max': cy_max,
             'coords': coords.tolist()
         }
     
     def calculate_pile_loads(self, Fz, Mx, My, foundation_id):
-        """Calculate maximum pile load using P = Fz/n + My/Zx + Mx/Zy"""
+        """Calculate maximum pile load using P = P/A + Mx*c/Ix + My*c/Iy"""
         try:
             props = self.calculate_properties(foundation_id)
             if not props:
@@ -206,9 +257,9 @@ class PileAnalyzer:
             config = self.get_foundation_config(foundation_id)
             
             # Calculate stress components
-            axial_stress = abs(Fz) / props['n_piles'] if props['n_piles'] > 0 else 0
-            stress_from_My = abs(My) / props['Zx'] if props['Zx'] > 0 else 0
-            stress_from_Mx = abs(Mx) / props['Zy'] if props['Zy'] > 0 else 0
+            axial_stress = Fz / props['n_piles'] if props['n_piles'] > 0 else 0
+            stress_from_My = abs(My) * props['cx_max'] / props['Iyy'] if props['Iyy'] > 0 else 0
+            stress_from_Mx = abs(Mx) * props['cy_max'] / props['Ixx'] if props['Ixx'] > 0 else 0
             
             # Maximum pile load
             max_pile_load = axial_stress + stress_from_My + stress_from_Mx
@@ -245,6 +296,8 @@ class PileAnalyzer:
                 'color': config.get('color', '#808080'),
                 'Ixx': props['Ixx'],
                 'Iyy': props['Iyy'],
+                'cx_max': props['cx_max'],
+                'cy_max': props['cy_max'],
                 'Zx': props['Zx'],
                 'Zy': props['Zy']
             }
@@ -286,6 +339,24 @@ class PileAnalyzer:
         return min(results, key=lambda x: x['utilization_ratio'])
 
 # ===================== HELPER FUNCTIONS =====================
+def format_load_combination(load_case):
+    """Convert load case code to readable combination"""
+    if isinstance(load_case, str):
+        # Check if it matches a known pattern
+        for pattern, combination in LOAD_COMBINATIONS.items():
+            if pattern.lower() in load_case.lower():
+                return combination
+        
+        # Try to extract number from load case
+        import re
+        match = re.search(r'(\d+)', load_case)
+        if match:
+            case_num = f"cLCB{match.group(1)}"
+            if case_num in LOAD_COMBINATIONS:
+                return LOAD_COMBINATIONS[case_num]
+    
+    return load_case  # Return original if no match
+
 def load_csv_file(uploaded_file):
     """Load CSV file with multiple encoding attempts"""
     if uploaded_file is None:
@@ -303,6 +374,26 @@ def load_csv_file(uploaded_file):
     
     return None, "Could not decode file with any standard encoding"
 
+def check_tension_nodes(df):
+    """Check for nodes with tensile forces (Fz < 0)"""
+    tension_nodes = []
+    
+    if 'FZ (tonf)' in df.columns:
+        tension_df = df[df['FZ (tonf)'] < 0]
+    elif 'Fz' in df.columns:
+        tension_df = df[df['Fz'] < 0]
+    else:
+        return tension_nodes
+    
+    for _, row in tension_df.iterrows():
+        tension_nodes.append({
+            'Node': row['Node'],
+            'Fz': row.get('FZ (tonf)', row.get('Fz', 0)),
+            'Load_Case': row.get('Load Combination', row.get('Load Case', 'Unknown'))
+        })
+    
+    return tension_nodes
+
 def process_analysis(df, selected_nodes, analyzer, target_utilization=0.85):
     """Process pile analysis for selected nodes"""
     if df is None:
@@ -314,13 +405,22 @@ def process_analysis(df, selected_nodes, analyzer, target_utilization=0.85):
     if len(df_filtered) == 0:
         return None
     
+    # Check for tension nodes
+    tension_nodes = check_tension_nodes(df_filtered)
+    st.session_state.tension_nodes = tension_nodes
+    
     results = []
     
     for idx, row in df_filtered.iterrows():
-        # Extract loads
-        Fz = abs(row.get('FZ (tonf)', row.get('Fz', 0)))
+        # Extract loads - handle both positive and negative Fz
+        Fz_raw = row.get('FZ (tonf)', row.get('Fz', 0))
+        Fz = abs(Fz_raw)  # Use absolute value for calculation
         Mx = abs(row.get('MX (tonf·m)', row.get('Mx', 0)))
         My = abs(row.get('MY (tonf·m)', row.get('My', 0)))
+        
+        # Get load combination
+        load_case_raw = row.get('Load Combination', row.get('Load Case', f'LC_{idx}'))
+        load_combination = format_load_combination(load_case_raw)
         
         # Check for manual assignment
         node = row['Node']
@@ -341,13 +441,37 @@ def process_analysis(df, selected_nodes, analyzer, target_utilization=0.85):
             result['Y'] = row.get('Y', 0)
             result['Z'] = row.get('Z', 0)
             result['Fz'] = Fz
+            result['Fz_raw'] = Fz_raw  # Store raw value for tension check
             result['Mx'] = Mx
             result['My'] = My
-            result['Load_Case'] = row.get('Load Combination', row.get('Load Case', f'LC_{idx}'))
+            result['Load_Case'] = load_case_raw
+            result['Load_Combination'] = load_combination
+            result['Has_Tension'] = Fz_raw < 0
             
             results.append(result)
     
     return pd.DataFrame(results)
+
+def create_foundation_properties_display(foundation_id):
+    """Create a detailed display of foundation properties"""
+    if foundation_id in st.session_state.foundation_properties:
+        props = st.session_state.foundation_properties[foundation_id]
+        
+        # Create properties table
+        properties_df = pd.DataFrame([
+            {'Property': 'Number of Piles (n)', 'Value': f"{props['n_piles']}", 'Unit': 'piles'},
+            {'Property': 'Pile Spacing', 'Value': f"{props['pile_spacing']:.2f}", 'Unit': 'm'},
+            {'Property': 'Moment of Inertia Ixx', 'Value': f"{props['Ixx']:.3f}", 'Unit': 'm²'},
+            {'Property': 'Moment of Inertia Iyy', 'Value': f"{props['Iyy']:.3f}", 'Unit': 'm²'},
+            {'Property': 'Distance cx (max)', 'Value': f"{props['cx_max']:.3f}", 'Unit': 'm'},
+            {'Property': 'Distance cy (max)', 'Value': f"{props['cy_max']:.3f}", 'Unit': 'm'},
+            {'Property': 'Section Modulus Zx', 'Value': f"{props['Zx']:.3f}", 'Unit': 'm²'},
+            {'Property': 'Section Modulus Zy', 'Value': f"{props['Zy']:.3f}", 'Unit': 'm²'},
+            {'Property': 'Centroid Location', 'Value': f"({props['centroid'][0]:.2f}, {props['centroid'][1]:.2f})", 'Unit': 'm'}
+        ])
+        
+        return properties_df
+    return None
 
 def create_custom_foundation_ui():
     """UI for creating custom foundations"""
@@ -497,8 +621,8 @@ def create_custom_foundation_ui():
             x_coords = coords_array[:, 0] - centroid_x
             y_coords = coords_array[:, 1] - centroid_y
             
-            Ixx = np.sum(x_coords**2)
-            Iyy = np.sum(y_coords**2)
+            Ixx = np.sum(y_coords**2)
+            Iyy = np.sum(x_coords**2)
             
             col1_prop, col2_prop = st.columns(2)
             with col1_prop:
@@ -507,9 +631,9 @@ def create_custom_foundation_ui():
             
             with col2_prop:
                 st.metric("Iyy (m²)", f"{Iyy:.3f}")
-                xmax = np.max(np.abs(x_coords))
-                ymax = np.max(np.abs(y_coords))
-                st.metric("Max Distance (m)", f"{max(xmax, ymax):.2f}")
+                cx_max = np.max(np.abs(x_coords))
+                cy_max = np.max(np.abs(y_coords))
+                st.metric("Max Distance (m)", f"{max(cx_max, cy_max):.2f}")
             
             # Save button
             if st.button("💾 Save Custom Foundation", type="primary", use_container_width=True):
@@ -615,10 +739,11 @@ else:
 st.sidebar.info(f"Selected {len(selected_nodes)} nodes")
 
 # ===================== MAIN CONTENT - TABS =====================
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "📚 Theory & Setup",
     "🛠️ Custom Foundations",
     "📊 Data & Analysis",
+    "🔍 Foundation Properties",
     "📈 Results & Visualization",
     "💾 Export"
 ])
@@ -634,14 +759,16 @@ with tab1:
         
         <div class="formula-box">
         <strong>Maximum Pile Load:</strong><br>
-        P<sub>max</sub> = P/n + |M<sub>y</sub>|/Z<sub>x</sub> + |M<sub>x</sub>|/Z<sub>y</sub>
+        P<sub>max</sub> = P/n + |M<sub>x</sub>|·c<sub>y</sub>/I<sub>xx</sub> + |M<sub>y</sub>|·c<sub>x</sub>/I<sub>yy</sub>
         <br><br>
         Where:<br>
         • P = Vertical load (tonf)<br>
         • n = Number of piles<br>
         • M<sub>x</sub>, M<sub>y</sub> = Moments (tonf·m)<br>
-        • Z<sub>x</sub> = I<sub>xx</sub>/x<sub>max</sub> (Section modulus)<br>
-        • Z<sub>y</sub> = I<sub>yy</sub>/y<sub>max</sub> (Section modulus)
+        • c<sub>x</sub>, c<sub>y</sub> = Distance to extreme fiber (m)<br>
+        • I<sub>xx</sub>, I<sub>yy</sub> = Moment of inertia (m²)<br>
+        • Z<sub>x</sub> = I<sub>xx</sub>/c<sub>y</sub> (Section modulus)<br>
+        • Z<sub>y</sub> = I<sub>yy</sub>/c<sub>x</sub> (Section modulus)
         </div>
         """, unsafe_allow_html=True)
         
@@ -745,6 +872,21 @@ with tab3:
             with st.expander("Preview Data"):
                 st.dataframe(df.head(10), use_container_width=True)
             
+            # Check for tension nodes before analysis
+            tension_check = check_tension_nodes(df[df['Node'].isin(selected_nodes)])
+            if tension_check:
+                st.markdown("""
+                <div class="tension-warning">
+                <h4>⚠️ TENSION WARNING!</h4>
+                <p>The following nodes have negative Fz values (tension):</p>
+                </div>
+                """, unsafe_allow_html=True)
+                
+                tension_df = pd.DataFrame(tension_check)
+                st.dataframe(tension_df, use_container_width=True)
+                
+                st.warning("Proceeding with analysis using absolute values of Fz. Please review foundation design for tension conditions.")
+            
             # Run analysis
             if st.button("🚀 Run Analysis", type="primary", use_container_width=True):
                 with st.spinner("Analyzing..."):
@@ -768,17 +910,133 @@ with tab3:
             'Node': [789, 790, 791],
             'X': [0, 10, 20],
             'Y': [0, 0, 0],
-            'FZ (tonf)': [400, 350, 450],
+            'Load Combination': ['cLCB5', 'cLCB6', 'cLCB9'],
+            'FZ (tonf)': [400, -50, 450],  # Include negative value for example
             'MX (tonf·m)': [80, 70, 90],
             'MY (tonf·m)': [60, 50, 70]
         })
         st.dataframe(example_df, use_container_width=True)
 
 with tab4:
+    st.markdown('<h2 class="section-header">🔍 Foundation Properties Summary</h2>', unsafe_allow_html=True)
+    
+    if st.session_state.final_results is not None:
+        results = st.session_state.final_results
+        
+        # Select a foundation to display properties
+        unique_foundations = results['foundation_id'].unique()
+        selected_foundation = st.selectbox("Select Foundation to View Properties", unique_foundations)
+        
+        if selected_foundation:
+            # Display formula
+            st.markdown("""
+            <div class="formula-box">
+            <strong>Stress Calculation Formula:</strong><br>
+            σ = P/A ± M<sub>x</sub>·c<sub>y</sub>/I<sub>xx</sub> ± M<sub>y</sub>·c<sub>x</sub>/I<sub>yy</sub>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            # Display properties
+            props_df = create_foundation_properties_display(selected_foundation)
+            
+            if props_df is not None:
+                st.markdown("### Foundation Geometric Properties")
+                st.markdown('<div class="properties-table">', unsafe_allow_html=True)
+                st.dataframe(props_df, use_container_width=True, hide_index=True)
+                st.markdown('</div>', unsafe_allow_html=True)
+                
+                # Show example calculation
+                example_node = results[results['foundation_id'] == selected_foundation].iloc[0]
+                
+                st.markdown("### Example Calculation (Node {})".format(example_node['Node']))
+                
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.markdown("**Input Loads:**")
+                    st.write(f"• P (Fz) = {example_node['Fz']:.2f} tonf")
+                    st.write(f"• Mx = {example_node['Mx']:.2f} tonf·m")
+                    st.write(f"• My = {example_node['My']:.2f} tonf·m")
+                    st.write(f"• Load Combination: **{example_node['Load_Combination']}**")
+                
+                with col2:
+                    st.markdown("**Stress Components:**")
+                    st.write(f"• P/n = {example_node['axial_stress']:.2f} tonf")
+                    st.write(f"• Mx·cy/Ixx = {example_node['moment_stress_mx']:.2f} tonf")
+                    st.write(f"• My·cx/Iyy = {example_node['moment_stress_my']:.2f} tonf")
+                    st.write(f"• **Total = {example_node['max_pile_load']:.2f} tonf**")
+                
+                # Utilization
+                st.markdown(f"""
+                <div class="critical-load">
+                <strong>Utilization Ratio:</strong> {example_node['utilization_ratio']:.2%}<br>
+                <strong>Category:</strong> {example_node['category']}<br>
+                <strong>Safety Status:</strong> {'✅ Safe' if example_node['is_safe'] else '❌ Over-capacity'}
+                </div>
+                """, unsafe_allow_html=True)
+                
+                # Visual representation
+                if selected_foundation in st.session_state.foundation_properties:
+                    props = st.session_state.foundation_properties[selected_foundation]
+                    coords = np.array(props['coords'])
+                    
+                    fig = go.Figure()
+                    
+                    # Add piles
+                    fig.add_trace(go.Scatter(
+                        x=coords[:, 0],
+                        y=coords[:, 1],
+                        mode='markers+text',
+                        marker=dict(size=30, color='blue', symbol='circle', 
+                                  line=dict(color='darkblue', width=2)),
+                        text=[f'P{i+1}' for i in range(len(coords))],
+                        textposition='top center',
+                        name='Piles'
+                    ))
+                    
+                    # Add centroid
+                    fig.add_trace(go.Scatter(
+                        x=[props['centroid'][0]],
+                        y=[props['centroid'][1]],
+                        mode='markers',
+                        marker=dict(size=15, color='red', symbol='x'),
+                        name='Centroid'
+                    ))
+                    
+                    # Add extreme fibers
+                    fig.add_shape(type="rect",
+                        x0=min(coords[:, 0]), y0=min(coords[:, 1]),
+                        x1=max(coords[:, 0]), y1=max(coords[:, 1]),
+                        line=dict(color="gray", dash="dash")
+                    )
+                    
+                    fig.update_layout(
+                        title=f"Foundation Layout: {selected_foundation}",
+                        xaxis_title="X (m)",
+                        yaxis_title="Y (m)",
+                        height=500,
+                        showlegend=True,
+                        xaxis=dict(scaleanchor="y", showgrid=True),
+                        yaxis=dict(scaleanchor="x", showgrid=True)
+                    )
+                    
+                    st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.info("Run analysis to view foundation properties")
+
+with tab5:
     st.markdown('<h2 class="section-header">📈 Results & Visualization</h2>', unsafe_allow_html=True)
     
     if st.session_state.final_results is not None:
         results = st.session_state.final_results
+        
+        # Display tension warning if applicable
+        if st.session_state.tension_nodes:
+            st.markdown("""
+            <div class="tension-warning">
+            <h4>⚠️ TENSION NODES IN RESULTS</h4>
+            <p>Nodes with tension forces are highlighted in the table below.</p>
+            </div>
+            """, unsafe_allow_html=True)
         
         # Summary metrics
         col1, col2, col3, col4 = st.columns(4)
@@ -793,11 +1051,39 @@ with tab4:
             total_piles = results['n_piles'].sum()
             st.metric("Total Piles", int(total_piles))
         
-        # Results table
-        st.subheader("Analysis Results")
-        display_cols = ['Node', 'foundation_id', 'n_piles', 'Fz', 'max_pile_load', 
-                       'utilization_ratio', 'category', 'is_safe']
-        st.dataframe(results[display_cols], use_container_width=True)
+        # Results table with critical load combination
+        st.subheader("Analysis Results - Critical Load Combinations")
+        
+        # Prepare display dataframe
+        display_results = results.copy()
+        display_results['Display_Load'] = display_results['Load_Combination']
+        display_results['Tension_Flag'] = display_results['Has_Tension'].apply(lambda x: '⚠️ TENSION' if x else '✓')
+        
+        display_cols = ['Node', 'foundation_id', 'n_piles', 'Display_Load', 
+                       'Fz', 'max_pile_load', 'utilization_ratio', 
+                       'category', 'is_safe', 'Tension_Flag']
+        
+        # Style the dataframe to highlight tension nodes
+        def highlight_tension(row):
+            if row['Has_Tension']:
+                return ['background-color: #ffe6e6'] * len(row)
+            elif not row['is_safe']:
+                return ['background-color: #ffcccc'] * len(row)
+            elif row['category'] == 'Optimal':
+                return ['background-color: #ccffcc'] * len(row)
+            else:
+                return [''] * len(row)
+        
+        styled_df = display_results[display_cols].style.apply(highlight_tension, axis=1)
+        st.dataframe(styled_df, use_container_width=True)
+        
+        # Legend
+        st.markdown("""
+        **Legend:**
+        - 🟩 Green: Optimal utilization (80-95%)
+        - 🟥 Light Red: Over-capacity design
+        - 🟨 Pink: Tension condition detected
+        """)
         
         # Visualizations
         st.subheader("Visualizations")
@@ -807,7 +1093,7 @@ with tab4:
     else:
         st.info("No results to display. Please run analysis first.")
 
-with tab5:
+with tab6:
     st.markdown('<h2 class="section-header">💾 Export Results</h2>', unsafe_allow_html=True)
     
     if st.session_state.final_results is not None:
@@ -816,10 +1102,12 @@ with tab5:
         col1, col2 = st.columns(2)
         
         with col1:
-            # Export CSV
-            csv = results.to_csv(index=False)
+            # Export CSV with all details
+            export_df = results.copy()
+            export_df['Critical_Load_Combination'] = export_df['Load_Combination']
+            csv = export_df.to_csv(index=False)
             st.download_button(
-                "📥 Download Results (CSV)",
+                "📥 Download Complete Results (CSV)",
                 data=csv,
                 file_name=f"pile_analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
                 mime="text/csv",
@@ -827,18 +1115,19 @@ with tab5:
             )
         
         with col2:
-            # Export custom foundations
-            if st.session_state.custom_foundations:
-                custom_json = json.dumps(st.session_state.custom_foundations, indent=2)
+            # Export foundation properties
+            if st.session_state.foundation_properties:
+                props_json = json.dumps(st.session_state.foundation_properties, indent=2)
                 st.download_button(
-                    "📥 Export Custom Foundations (JSON)",
-                    data=custom_json,
-                    file_name=f"custom_foundations_{datetime.now().strftime('%Y%m%d')}.json",
+                    "📥 Export Foundation Properties (JSON)",
+                    data=props_json,
+                    file_name=f"foundation_properties_{datetime.now().strftime('%Y%m%d')}.json",
                     mime="application/json",
                     use_container_width=True
                 )
         
-        # Generate report
+        # Generate comprehensive report
+        tension_count = len(st.session_state.tension_nodes)
         report = f"""# Pile Foundation Analysis Report
 Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 
@@ -852,14 +1141,44 @@ Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 - Total Nodes: {len(results)}
 - Average Utilization: {results['utilization_ratio'].mean():.1%}
 - Safe Designs: {len(results[results['is_safe']])} / {len(results)}
-- Total Piles Required: {results['n_piles'].sum()}
+- Total Piles Required: {int(results['n_piles'].sum())}
+- **Nodes with Tension: {tension_count}**
 
 ## Foundation Distribution
 {results['foundation_id'].value_counts().to_string()}
+
+## Critical Load Combinations Used
+{results[['Node', 'Load_Combination', 'utilization_ratio']].to_string()}
+
+## Warnings
+"""
+        
+        if tension_count > 0:
+            report += f"\n### ⚠️ TENSION WARNING\n"
+            report += f"{tension_count} nodes have tensile forces (negative Fz).\n"
+            report += "These require special foundation design considerations.\n\n"
+            for tension_node in st.session_state.tension_nodes:
+                report += f"- Node {tension_node['Node']}: Fz = {tension_node['Fz']:.2f} tonf\n"
+        
+        report += """
+## Foundation Properties Summary
+"""
+        for fid in results['foundation_id'].unique():
+            if fid in st.session_state.foundation_properties:
+                props = st.session_state.foundation_properties[fid]
+                report += f"""
+### {fid}
+- Number of Piles: {props['n_piles']}
+- Ixx: {props['Ixx']:.3f} m²
+- Iyy: {props['Iyy']:.3f} m²
+- cx_max: {props['cx_max']:.3f} m
+- cy_max: {props['cy_max']:.3f} m
+- Zx: {props['Zx']:.3f} m²
+- Zy: {props['Zy']:.3f} m²
 """
         
         st.download_button(
-            "📄 Download Report (MD)",
+            "📄 Download Comprehensive Report (MD)",
             data=report,
             file_name=f"analysis_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md",
             mime="text/markdown",
@@ -868,4 +1187,4 @@ Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
         
         st.success("✅ Export options ready!")
     else:
-        st.info("No results to export")
+        st.info("No results to export. Run analysis first.")
