@@ -5,18 +5,17 @@ import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import json
-import io
 from datetime import datetime
 
-# Page configuration
+# ===================== PAGE CONFIGURATION =====================
 st.set_page_config(
-    page_title="Multi-Foundation Pile Analysis Tool",
+    page_title="Advanced Pile Foundation Analysis",
     page_icon="🏗️",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS
+# ===================== CUSTOM CSS =====================
 st.markdown("""
 <style>
     .main-header {
@@ -42,1187 +41,690 @@ st.markdown("""
         border-left: 5px solid #1f77b4;
         margin: 0.5rem 0;
     }
-    .node-assignment {
-        background-color: #e8f4fd;
-        padding: 0.8rem;
-        border-radius: 8px;
-        border: 2px solid #4a90e2;
-        margin: 0.5rem 0;
-    }
-    .foundation-group {
-        background-color: #fff5ee;
-        padding: 1rem;
-        border-radius: 8px;
-        border: 2px solid #ff8c00;
+    .formula-box {
+        background-color: #e8f4f8;
+        padding: 1.5rem;
+        border-radius: 10px;
+        border: 2px solid #1f77b4;
         margin: 1rem 0;
+        font-family: 'Courier New', monospace;
     }
-    .optimal-design {
+    .success-box {
         background-color: #d4edda;
         border-left: 5px solid #28a745;
         padding: 1rem;
         margin: 0.5rem 0;
     }
-    .manual-override {
-        background-color: #ffefd5;
-        border-left: 5px solid #ff6347;
+    .warning-box {
+        background-color: #fff3cd;
+        border-left: 5px solid #ffc107;
+        padding: 1rem;
+        margin: 0.5rem 0;
+    }
+    .error-box {
+        background-color: #f8d7da;
+        border-left: 5px solid #dc3545;
         padding: 1rem;
         margin: 0.5rem 0;
     }
 </style>
 """, unsafe_allow_html=True)
 
-# Title
-st.markdown('<h1 class="main-header">🏗️ Multi-Foundation Pile Analysis Tool</h1>', unsafe_allow_html=True)
-st.markdown('<p style="text-align: center; font-size: 1.2rem; color: #666;">Assign Different Foundation Types to Different Nodes</p>', unsafe_allow_html=True)
+# ===================== TITLE =====================
+st.markdown('<h1 class="main-header">🏗️ Advanced Pile Foundation Analysis Tool</h1>', unsafe_allow_html=True)
+st.markdown('<p style="text-align: center; font-size: 1.2rem; color: #666;">Theory-Based Design with Custom Foundation Support</p>', unsafe_allow_html=True)
 
-# Initialize session state
+# ===================== SESSION STATE INITIALIZATION =====================
 if 'analysis_results' not in st.session_state:
     st.session_state.analysis_results = None
 if 'final_results' not in st.session_state:
     st.session_state.final_results = None
-if 'node_foundation_mapping' not in st.session_state:
-    st.session_state.node_foundation_mapping = {}
-if 'foundation_groups' not in st.session_state:
-    st.session_state.foundation_groups = {}
 if 'custom_foundations' not in st.session_state:
     st.session_state.custom_foundations = {}
-if 'override_mode' not in st.session_state:
-    st.session_state.override_mode = False
+if 'node_assignments' not in st.session_state:
+    st.session_state.node_assignments = {}
+if 'allowed_foundations' not in st.session_state:
+    st.session_state.allowed_foundations = []
 
-# Initialize custom foundations in session state
-if 'custom_pile_configs' not in st.session_state:
-    st.session_state.custom_pile_configs = {}
-
-# Default pile configurations
-DEFAULT_PILE_CONFIGURATIONS = {
-    'F3': {
-        'name': '3-Pile Triangle',
-        'num_piles': 3,
-        'arrangement': 'Triangular',
-        'color': '#FF6B6B',
-        'coordinates': [
-            (0, 1.155),
-            (-1.0, -0.577),
-            (1.0, -0.577)
-        ]
-    },
-    'F4': {
-        'name': '4-Pile Square (2×2)',
-        'num_piles': 4,
-        'arrangement': 'Square',
-        'color': '#4ECDC4',
-        'coordinates': [
-            (-1.0, 1.0), (1.0, 1.0),
-            (-1.0, -1.0), (1.0, -1.0)
-        ]
-    },
-    'F5': {
-        'name': '5-Pile Pentagon',
-        'num_piles': 5,
-        'arrangement': 'Pentagon',
-        'color': '#45B7D1',
-        'coordinates': [
-            (0, 1.2),
-            (1.14, 0.37),
-            (0.71, -0.97),
-            (-0.71, -0.97),
-            (-1.14, 0.37)
-        ]
-    },
-    'F6': {
-        'name': '6-Pile Rectangle (2×3)',
-        'num_piles': 6,
-        'arrangement': 'Rectangular 2×3',
-        'color': '#96CEB4',
-        'coordinates': [
-            (-1.0, 2.0), (1.0, 2.0),
-            (-1.0, 0), (1.0, 0),
-            (-1.0, -2.0), (1.0, -2.0)
-        ]
-    },
-    'F7': {
-        'name': '7-Pile (Hexagon + Center)',
-        'num_piles': 7,
-        'arrangement': 'Hexagonal with center',
-        'color': '#FFEAA7',
-        'coordinates': [
-            (0, 0),
-            (1.2, 0), (-1.2, 0),
-            (0.6, 1.04), (-0.6, 1.04),
-            (0.6, -1.04), (-0.6, -1.04)
-        ]
-    },
-    'F8': {
-        'name': '8-Pile Rectangle (2×4)',
-        'num_piles': 8,
-        'arrangement': 'Rectangular 2×4',
-        'color': '#DDA0DD',
-        'coordinates': [
-            (-1.0, 3.0), (1.0, 3.0),
-            (-1.0, 1.0), (1.0, 1.0),
-            (-1.0, -1.0), (1.0, -1.0),
-            (-1.0, -3.0), (1.0, -3.0)
-        ]
-    },
-    'F9': {
-        'name': '9-Pile Square (3×3)',
-        'num_piles': 9,
-        'arrangement': 'Square 3×3',
-        'color': '#98D8C8',
-        'coordinates': [
-            (-2.0, 2.0), (0, 2.0), (2.0, 2.0),
-            (-2.0, 0), (0, 0), (2.0, 0),
-            (-2.0, -2.0), (0, -2.0), (2.0, -2.0)
-        ]
-    },
-    'F10': {
-        'name': '10-Pile Rectangle (2×5)',
-        'num_piles': 10,
-        'arrangement': 'Rectangular 2×5',
-        'color': '#F7DC6F',
-        'coordinates': [
-            (-1.0, 4.0), (1.0, 4.0),
-            (-1.0, 2.0), (1.0, 2.0),
-            (-1.0, 0), (1.0, 0),
-            (-1.0, -2.0), (1.0, -2.0),
-            (-1.0, -4.0), (1.0, -4.0)
-        ]
-    },
-    'F12': {
-        'name': '12-Pile Rectangle (3×4)',
-        'num_piles': 12,
-        'arrangement': 'Rectangular 3×4',
-        'color': '#BB8FCE',
-        'coordinates': [
-            (-2.0, 3.0), (0, 3.0), (2.0, 3.0),
-            (-2.0, 1.0), (0, 1.0), (2.0, 1.0),
-            (-2.0, -1.0), (0, -1.0), (2.0, -1.0),
-            (-2.0, -3.0), (0, -3.0), (2.0, -3.0)
-        ]
-    },
-    'F15': {
-        'name': '15-Pile Rectangle (3×5)',
-        'num_piles': 15,
-        'arrangement': 'Rectangular 3×5',
-        'color': '#85C1E2',
-        'coordinates': [
-            (-2.0, 4.0), (0, 4.0), (2.0, 4.0),
-            (-2.0, 2.0), (0, 2.0), (2.0, 2.0),
-            (-2.0, 0), (0, 0), (2.0, 0),
-            (-2.0, -2.0), (0, -2.0), (2.0, -2.0),
-            (-2.0, -4.0), (0, -4.0), (2.0, -4.0)
-        ]
-    },
-    'F18': {
-        'name': '18-Pile Rectangle (3×6)',
-        'num_piles': 18,
-        'arrangement': 'Rectangular 3×6',
-        'color': '#F8B739',
-        'coordinates': [
-            (-2.0, 5.0), (0, 5.0), (2.0, 5.0),
-            (-2.0, 3.0), (0, 3.0), (2.0, 3.0),
-            (-2.0, 1.0), (0, 1.0), (2.0, 1.0),
-            (-2.0, -1.0), (0, -1.0), (2.0, -1.0),
-            (-2.0, -3.0), (0, -3.0), (2.0, -3.0),
-            (-2.0, -5.0), (0, -5.0), (2.0, -5.0)
-        ]
-    },
-    'F20': {
-        'name': '20-Pile Rectangle (4×5)',
-        'num_piles': 20,
-        'arrangement': 'Rectangular 4×5',
-        'color': '#52BE80',
-        'coordinates': [
-            (-3.0, 4.0), (-1.0, 4.0), (1.0, 4.0), (3.0, 4.0),
-            (-3.0, 2.0), (-1.0, 2.0), (1.0, 2.0), (3.0, 2.0),
-            (-3.0, 0), (-1.0, 0), (1.0, 0), (3.0, 0),
-            (-3.0, -2.0), (-1.0, -2.0), (1.0, -2.0), (3.0, -2.0),
-            (-3.0, -4.0), (-1.0, -4.0), (1.0, -4.0), (3.0, -4.0)
-        ]
-    }
+# ===================== DEFAULT CONFIGURATIONS =====================
+DEFAULT_FOUNDATIONS = {
+    'F3': {'name': '3-Pile Triangle', 'piles': 3, 'color': '#FF6B6B',
+           'coords': [(0, 1.155), (-1.0, -0.577), (1.0, -0.577)]},
+    'F4': {'name': '4-Pile Square', 'piles': 4, 'color': '#4ECDC4',
+           'coords': [(-1, 1), (1, 1), (-1, -1), (1, -1)]},
+    'F5': {'name': '5-Pile Pentagon', 'piles': 5, 'color': '#45B7D1',
+           'coords': [(0, 1.2), (1.14, 0.37), (0.71, -0.97), (-0.71, -0.97), (-1.14, 0.37)]},
+    'F6': {'name': '6-Pile Rect 2×3', 'piles': 6, 'color': '#96CEB4',
+           'coords': [(-1, 2), (1, 2), (-1, 0), (1, 0), (-1, -2), (1, -2)]},
+    'F7': {'name': '7-Pile Hexagon+Center', 'piles': 7, 'color': '#FFEAA7',
+           'coords': [(0, 0), (1.2, 0), (-1.2, 0), (0.6, 1.04), (-0.6, 1.04), (0.6, -1.04), (-0.6, -1.04)]},
+    'F8': {'name': '8-Pile Rect 2×4', 'piles': 8, 'color': '#DDA0DD',
+           'coords': [(-1, 3), (1, 3), (-1, 1), (1, 1), (-1, -1), (1, -1), (-1, -3), (1, -3)]},
+    'F9': {'name': '9-Pile Square 3×3', 'piles': 9, 'color': '#98D8C8',
+           'coords': [(-2, 2), (0, 2), (2, 2), (-2, 0), (0, 0), (2, 0), (-2, -2), (0, -2), (2, -2)]},
+    'F10': {'name': '10-Pile Rect 2×5', 'piles': 10, 'color': '#F7DC6F',
+            'coords': [(-1, 4), (1, 4), (-1, 2), (1, 2), (-1, 0), (1, 0), (-1, -2), (1, -2), (-1, -4), (1, -4)]},
+    'F12': {'name': '12-Pile Rect 3×4', 'piles': 12, 'color': '#BB8FCE',
+            'coords': [(-2, 3), (0, 3), (2, 3), (-2, 1), (0, 1), (2, 1), 
+                      (-2, -1), (0, -1), (2, -1), (-2, -3), (0, -3), (2, -3)]},
+    'F15': {'name': '15-Pile Rect 3×5', 'piles': 15, 'color': '#85C1E2',
+            'coords': [(-2, 4), (0, 4), (2, 4), (-2, 2), (0, 2), (2, 2),
+                      (-2, 0), (0, 0), (2, 0), (-2, -2), (0, -2), (2, -2),
+                      (-2, -4), (0, -4), (2, -4)]},
+    'F18': {'name': '18-Pile Rect 3×6', 'piles': 18, 'color': '#F8B739',
+            'coords': [(-2, 5), (0, 5), (2, 5), (-2, 3), (0, 3), (2, 3),
+                      (-2, 1), (0, 1), (2, 1), (-2, -1), (0, -1), (2, -1),
+                      (-2, -3), (0, -3), (2, -3), (-2, -5), (0, -5), (2, -5)]},
+    'F20': {'name': '20-Pile Rect 4×5', 'piles': 20, 'color': '#52BE80',
+            'coords': [(-3, 4), (-1, 4), (1, 4), (3, 4), (-3, 2), (-1, 2), (1, 2), (3, 2),
+                      (-3, 0), (-1, 0), (1, 0), (3, 0), (-3, -2), (-1, -2), (1, -2), (3, -2),
+                      (-3, -4), (-1, -4), (1, -4), (3, -4)]}
 }
 
-# Default nodes
-DEFAULT_NODES = [789, 790, 791,
-                4561, 4572, 4576, 4581, 4586,
-                4627, 4632, 4637,
-                4657, 4663,
-                4748, 4749, 4752,
-                4827, 4831,
-                5568, 5569,
-                5782, 5784,
+DEFAULT_NODES = [789, 790, 791, 4561, 4572, 4576, 4581, 4586, 4627, 4632, 4637,
+                4657, 4663, 4748, 4749, 4752, 4827, 4831, 5568, 5569, 5782, 5784,
                 7446, 7447, 7448, 7453, 7461, 7464]
 
-class PileGroupAnalyzer:
-    """Pile group analysis with multi-foundation support"""
+# ===================== ANALYZER CLASS =====================
+class PileAnalyzer:
+    """Pile foundation analysis using proper structural engineering theory"""
     
-    def __init__(self, pile_diameter=0.6, pile_capacity=120, pile_spacing=1.5,
-                 safety_factor=1.5):
+    def __init__(self, pile_diameter=0.6, pile_capacity=120, pile_spacing=1.5):
         self.pile_diameter = pile_diameter
         self.pile_capacity = pile_capacity
         self.pile_spacing = pile_spacing
-        self.safety_factor = safety_factor
         self.min_spacing = 2.5 * pile_diameter
+    
+    def get_foundation_config(self, foundation_id):
+        """Get foundation configuration from default or custom"""
+        all_foundations = {**DEFAULT_FOUNDATIONS, **st.session_state.custom_foundations}
+        config = all_foundations.get(foundation_id, None)
         
-    def calculate_section_properties(self, footing_config, custom_spacing=None):
-        """Calculate geometric properties of pile group"""
-        if isinstance(footing_config, dict):
-            config = footing_config
-        else:
-            config = DEFAULT_PILE_CONFIGURATIONS.get(footing_config, None)
-            if config is None:
-                raise ValueError(f"Unknown footing type: {footing_config}")
+        if config is None:
+            st.warning(f"Foundation {foundation_id} not found. Using default F4.")
+            config = DEFAULT_FOUNDATIONS.get('F4')
         
-        spacing = custom_spacing if custom_spacing else self.pile_spacing
-        coords = np.array(config['coordinates']) * spacing
+        return config
+    
+    def calculate_properties(self, foundation_id):
+        """Calculate section properties for a foundation"""
+        config = self.get_foundation_config(foundation_id)
+        if not config:
+            return None
         
+        # Get coordinates
+        coords = np.array(config.get('coords', []))
+        if len(coords) == 0:
+            st.error(f"No coordinates found for foundation {foundation_id}")
+            return None
+        
+        coords = coords * self.pile_spacing
+        n_piles = len(coords)
+        
+        # Calculate centroid
         centroid_x = np.mean(coords[:, 0])
         centroid_y = np.mean(coords[:, 1])
         
+        # Adjust to centroid
         x_coords = coords[:, 0] - centroid_x
         y_coords = coords[:, 1] - centroid_y
         
+        # Calculate moment of inertia
         Ixx = np.sum(x_coords**2)
         Iyy = np.sum(y_coords**2)
         
+        # Maximum distances
         xmax = np.max(np.abs(x_coords)) if len(x_coords) > 0 else 1.0
         ymax = np.max(np.abs(y_coords)) if len(y_coords) > 0 else 1.0
         
-        Zx = Ixx / xmax if xmax > 0 else float('inf')
-        Zy = Iyy / ymax if ymax > 0 else float('inf')
+        # Prevent division by zero
+        xmax = max(xmax, 0.1)
+        ymax = max(ymax, 0.1)
+        
+        # Section modulus
+        Zx = Ixx / ymax
+        Zy = Iyy / xmax
         
         return {
+            'n_piles': n_piles,
             'Ixx': Ixx,
             'Iyy': Iyy,
-            'xmax': xmax,
-            'ymax': ymax,
             'Zx': Zx,
             'Zy': Zy,
-            'n_piles': len(coords),
-            'name': config.get('name', 'Custom'),
-            'arrangement': config.get('arrangement', 'Custom'),
-            'coordinates': coords.tolist(),
-            'color': config.get('color', '#808080')
+            'xmax': xmax,
+            'ymax': ymax,
+            'coords': coords.tolist()
         }
     
-    def calculate_pile_loads(self, Fz, Mx, My, footing_config):
-        """Calculate maximum pile load"""
-        props = self.calculate_section_properties(footing_config)
-        
-        axial_stress = abs(Fz) / props['n_piles']
-        
-        if props['Zx'] != float('inf'):
-            stress_from_My = abs(My) / props['Zx']
-        else:
-            stress_from_My = 0
+    def calculate_pile_loads(self, Fz, Mx, My, foundation_id):
+        """Calculate maximum pile load using P = Fz/n + My/Zx + Mx/Zy"""
+        try:
+            props = self.calculate_properties(foundation_id)
+            if not props:
+                return None
             
-        if props['Zy'] != float('inf'):
-            stress_from_Mx = abs(Mx) / props['Zy']
-        else:
-            stress_from_Mx = 0
-        
-        max_pile_load = axial_stress + stress_from_My + stress_from_Mx
-        min_pile_load = axial_stress - stress_from_My - stress_from_Mx
-        
-        utilization = max_pile_load / self.pile_capacity
-        
-        if utilization > 1.0:
-            category = "Over-Capacity"
-            category_color = "🔴"
-        elif utilization > 0.95:
-            category = "Near-Capacity"
-            category_color = "🟠"
-        elif utilization > 0.80:
-            category = "Optimal"
-            category_color = "🟢"
-        elif utilization > 0.60:
-            category = "Conservative"
-            category_color = "🟡"
-        else:
-            category = "Over-Conservative"
-            category_color = "⚪"
-        
-        return {
-            'footing_type': footing_config if isinstance(footing_config, str) else 'Custom',
-            'footing_name': props['name'],
-            'arrangement': props['arrangement'],
-            'n_piles': props['n_piles'],
-            'axial_stress': axial_stress,
-            'moment_stress_mx': stress_from_Mx,
-            'moment_stress_my': stress_from_My,
-            'max_pile_load': max_pile_load,
-            'min_pile_load': min_pile_load,
-            'pile_capacity': self.pile_capacity,
-            'utilization_ratio': utilization,
-            'is_safe': utilization <= 1.0,
-            'has_tension': min_pile_load < 0,
-            'category': category,
-            'category_color': category_color,
-            'foundation_color': props['color'],
-            'Ixx': props['Ixx'],
-            'Iyy': props['Iyy'],
-            'Zx': props['Zx'],
-            'Zy': props['Zy'],
-            'coordinates': props['coordinates']
-        }
+            config = self.get_foundation_config(foundation_id)
+            
+            # Calculate stress components
+            axial_stress = abs(Fz) / props['n_piles'] if props['n_piles'] > 0 else 0
+            stress_from_My = abs(My) / props['Zx'] if props['Zx'] > 0 else 0
+            stress_from_Mx = abs(Mx) / props['Zy'] if props['Zy'] > 0 else 0
+            
+            # Maximum pile load
+            max_pile_load = axial_stress + stress_from_My + stress_from_Mx
+            min_pile_load = axial_stress - stress_from_My - stress_from_Mx
+            
+            # Utilization ratio
+            utilization = max_pile_load / self.pile_capacity if self.pile_capacity > 0 else 0
+            
+            # Category
+            if utilization > 1.0:
+                category = "Over-Capacity"
+            elif utilization > 0.95:
+                category = "Near-Capacity"
+            elif utilization > 0.80:
+                category = "Optimal"
+            elif utilization > 0.60:
+                category = "Conservative"
+            else:
+                category = "Over-Conservative"
+            
+            return {
+                'foundation_id': foundation_id,
+                'foundation_name': config.get('name', 'Unknown'),
+                'n_piles': props['n_piles'],
+                'axial_stress': axial_stress,
+                'moment_stress_mx': stress_from_Mx,
+                'moment_stress_my': stress_from_My,
+                'max_pile_load': max_pile_load,
+                'min_pile_load': min_pile_load,
+                'utilization_ratio': utilization,
+                'is_safe': utilization <= 1.0,
+                'has_tension': min_pile_load < 0,
+                'category': category,
+                'color': config.get('color', '#808080'),
+                'Ixx': props['Ixx'],
+                'Iyy': props['Iyy'],
+                'Zx': props['Zx'],
+                'Zy': props['Zy']
+            }
+        except Exception as e:
+            st.error(f"Error calculating loads for {foundation_id}: {str(e)}")
+            return None
     
-    def find_optimal_footing(self, Fz, Mx, My, target_utilization=0.85, 
-                            allowed_foundations=None):
-        """Find optimal footing from allowed list"""
+    def optimize_foundation(self, Fz, Mx, My, target_utilization=0.85, allowed_foundations=None):
+        """Find optimal foundation for given loads"""
         if allowed_foundations is None:
-            allowed_foundations = list(DEFAULT_PILE_CONFIGURATIONS.keys())
+            allowed_foundations = list(DEFAULT_FOUNDATIONS.keys())
+        
+        if len(allowed_foundations) == 0:
+            allowed_foundations = ['F4', 'F6', 'F9']  # Default fallback
         
         results = []
-        for footing_type in allowed_foundations:
-            if footing_type in DEFAULT_PILE_CONFIGURATIONS:
-                analysis = self.calculate_pile_loads(Fz, Mx, My, footing_type)
-                analysis['footing_key'] = footing_type
-                analysis['target_diff'] = abs(analysis['utilization_ratio'] - target_utilization)
-                results.append(analysis)
+        for foundation_id in allowed_foundations:
+            result = self.calculate_pile_loads(Fz, Mx, My, foundation_id)
+            if result:
+                result['target_diff'] = abs(result['utilization_ratio'] - target_utilization)
+                results.append(result)
         
         if not results:
+            # Try with default F4 as last resort
+            result = self.calculate_pile_loads(Fz, Mx, My, 'F4')
+            if result:
+                return result
             return None
         
-        df_results = pd.DataFrame(results)
-        safe_designs = df_results[df_results['is_safe']]
+        # Sort by target difference
+        results.sort(key=lambda x: x['target_diff'])
         
-        if len(safe_designs) > 0:
-            optimal_idx = safe_designs['target_diff'].idxmin()
-            return safe_designs.loc[optimal_idx].to_dict()
-        else:
-            optimal_idx = df_results['utilization_ratio'].idxmin()
-            return df_results.loc[optimal_idx].to_dict()
+        # Find best safe design
+        for result in results:
+            if result['is_safe']:
+                return result
+        
+        # If no safe design, return lowest utilization
+        return min(results, key=lambda x: x['utilization_ratio'])
 
-def create_foundation_assignment_interface():
-    """Create interface for assigning foundations to nodes"""
-    st.markdown("### 🎯 Foundation Assignment Methods")
+# ===================== HELPER FUNCTIONS =====================
+def load_csv_file(uploaded_file):
+    """Load CSV file with multiple encoding attempts"""
+    if uploaded_file is None:
+        return None, "No file uploaded"
     
-    # This function is now integrated directly in tab1
-    # Return empty since the interface is created in the main tab
-    return None
+    encodings = ['utf-8', 'latin-1', 'cp1252', 'iso-8859-1']
+    for encoding in encodings:
+        try:
+            df = pd.read_csv(uploaded_file, encoding=encoding)
+            uploaded_file.seek(0)  # Reset file pointer
+            return df, f"Successfully loaded with {encoding} encoding"
+        except:
+            uploaded_file.seek(0)
+            continue
     
-    assignment_method = st.radio(
-        "Choose assignment method:",
-        ["Automatic Optimization", "Manual Assignment", "Group Assignment", "Load-Based Rules"]
-    )
-    
-    if assignment_method == "Automatic Optimization":
-        st.markdown("""
-        <div class="optimal-design">
-        <strong>🤖 Automatic Optimization</strong><br>
-        System will automatically select the optimal foundation for each node based on:
-        <ul>
-        <li>Load requirements (Fz, Mx, My)</li>
-        <li>Target utilization ratio</li>
-        <li>Safety factors</li>
-        </ul>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        # Allowed foundations for optimization
-        st.markdown("#### Allowed Foundation Types")
-        allowed_foundations = st.multiselect(
-            "Select foundations to consider:",
-            options=list(DEFAULT_PILE_CONFIGURATIONS.keys()),
-            default=list(DEFAULT_PILE_CONFIGURATIONS.keys())
-        )
-        st.session_state['allowed_foundations'] = allowed_foundations
-        
-    elif assignment_method == "Manual Assignment":
-        st.markdown("""
-        <div class="manual-override">
-        <strong>✏️ Manual Assignment</strong><br>
-        Manually assign specific foundation types to specific nodes.
-        </div>
-        """, unsafe_allow_html=True)
-        
-        # Create manual assignment interface
-        if 'temp_assignments' not in st.session_state:
-            st.session_state.temp_assignments = {}
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            selected_nodes_for_assignment = st.multiselect(
-                "Select nodes:",
-                options=DEFAULT_NODES,
-                key="manual_nodes"
-            )
-        
-        with col2:
-            foundation_for_nodes = st.selectbox(
-                "Assign foundation type:",
-                options=list(DEFAULT_PILE_CONFIGURATIONS.keys()),
-                key="manual_foundation"
-            )
-        
-        if st.button("➕ Add Assignment"):
-            for node in selected_nodes_for_assignment:
-                st.session_state.temp_assignments[node] = foundation_for_nodes
-            st.success(f"Assigned {foundation_for_nodes} to {len(selected_nodes_for_assignment)} nodes")
-        
-        # Display current assignments
-        if st.session_state.temp_assignments:
-            st.markdown("#### Current Assignments")
-            assignments_df = pd.DataFrame([
-                {"Node": node, "Foundation": found}
-                for node, found in st.session_state.temp_assignments.items()
-            ])
-            st.dataframe(assignments_df, use_container_width=True)
-            
-            if st.button("🗑️ Clear All Assignments"):
-                st.session_state.temp_assignments = {}
-                st.rerun()
-        
-        # Save to main mapping
-        if st.button("💾 Save Manual Assignments", type="primary"):
-            st.session_state.node_foundation_mapping = st.session_state.temp_assignments.copy()
-            st.session_state.override_mode = True
-            st.success("Manual assignments saved!")
-    
-    elif assignment_method == "Group Assignment":
-        st.markdown("""
-        <div class="foundation-group">
-        <strong>👥 Group Assignment</strong><br>
-        Create groups of nodes and assign the same foundation to each group.
-        </div>
-        """, unsafe_allow_html=True)
-        
-        # Create groups
-        group_name = st.text_input("Group Name", "Group_1")
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            group_nodes = st.multiselect(
-                "Select nodes for this group:",
-                options=DEFAULT_NODES,
-                key="group_nodes"
-            )
-        
-        with col2:
-            group_foundation = st.selectbox(
-                "Foundation for this group:",
-                options=list(DEFAULT_PILE_CONFIGURATIONS.keys()),
-                key="group_foundation"
-            )
-        
-        if st.button("➕ Create Group"):
-            if group_name not in st.session_state.foundation_groups:
-                st.session_state.foundation_groups[group_name] = {}
-            st.session_state.foundation_groups[group_name] = {
-                'nodes': group_nodes,
-                'foundation': group_foundation
-            }
-            st.success(f"Created group '{group_name}' with {len(group_nodes)} nodes")
-        
-        # Display groups
-        if st.session_state.foundation_groups:
-            st.markdown("#### Foundation Groups")
-            for gname, gdata in st.session_state.foundation_groups.items():
-                with st.expander(f"{gname} - {gdata['foundation']} ({len(gdata['nodes'])} nodes)"):
-                    st.write(f"Foundation: **{gdata['foundation']}**")
-                    st.write(f"Nodes: {gdata['nodes']}")
-                    if st.button(f"Delete {gname}", key=f"del_{gname}"):
-                        del st.session_state.foundation_groups[gname]
-                        st.rerun()
-        
-        # Apply groups
-        if st.button("✅ Apply Group Assignments", type="primary"):
-            mapping = {}
-            for gdata in st.session_state.foundation_groups.values():
-                for node in gdata['nodes']:
-                    mapping[node] = gdata['foundation']
-            st.session_state.node_foundation_mapping = mapping
-            st.session_state.override_mode = True
-            st.success(f"Applied assignments for {len(mapping)} nodes")
-    
-    else:  # Load-Based Rules
-        st.markdown("""
-        <div class="node-assignment">
-        <strong>📊 Load-Based Rules</strong><br>
-        Automatically assign foundations based on load ranges.
-        </div>
-        """, unsafe_allow_html=True)
-        
-        st.markdown("#### Define Load Rules")
-        
-        # Create rules
-        if 'load_rules' not in st.session_state:
-            st.session_state.load_rules = []
-        
-        col1, col2, col3, col4 = st.columns(4)
-        
-        with col1:
-            min_load = st.number_input("Min Fz (tonf)", 0, 1000, 0)
-        with col2:
-            max_load = st.number_input("Max Fz (tonf)", 0, 1000, 500)
-        with col3:
-            rule_foundation = st.selectbox(
-                "Use foundation:",
-                options=list(DEFAULT_PILE_CONFIGURATIONS.keys()),
-                key="rule_foundation"
-            )
-        with col4:
-            st.write("")  # Spacer
-            st.write("")  # Spacer
-            if st.button("➕ Add Rule"):
-                st.session_state.load_rules.append({
-                    'min': min_load,
-                    'max': max_load,
-                    'foundation': rule_foundation
-                })
-        
-        # Display rules
-        if st.session_state.load_rules:
-            st.markdown("#### Current Rules")
-            rules_df = pd.DataFrame(st.session_state.load_rules)
-            st.dataframe(rules_df, use_container_width=True)
-            
-            if st.button("🗑️ Clear Rules"):
-                st.session_state.load_rules = []
-                st.rerun()
-    
-    return assignment_method
+    return None, "Could not decode file with any standard encoding"
 
-def process_multi_foundation_analysis(df, nodes, analyzer, assignment_method, 
-                                     target_utilization=0.85):
-    """Process analysis with multiple foundation types including custom"""
+def process_analysis(df, selected_nodes, analyzer, target_utilization=0.85):
+    """Process pile analysis for selected nodes"""
+    if df is None:
+        return None
     
-    df_filtered = df[df['Node'].isin(nodes)].copy()
+    # Filter for selected nodes
+    df_filtered = df[df['Node'].isin(selected_nodes)]
     
     if len(df_filtered) == 0:
         return None
     
-    # Get all available foundations (default + custom)
-    all_foundations = {**DEFAULT_PILE_CONFIGURATIONS, **st.session_state.custom_pile_configs}
-    
-    all_results = []
+    results = []
     
     for idx, row in df_filtered.iterrows():
-        node = row['Node']
+        # Extract loads
         Fz = abs(row.get('FZ (tonf)', row.get('Fz', 0)))
         Mx = abs(row.get('MX (tonf·m)', row.get('Mx', 0)))
         My = abs(row.get('MY (tonf·m)', row.get('My', 0)))
         
-        result = None
-        
-        # Determine foundation based on assignment method
-        if assignment_method == "Manual Assignment":
-            if hasattr(st.session_state, 'temp_assignments') and node in st.session_state.temp_assignments:
-                footing_type = st.session_state.temp_assignments[node]
-                if footing_type in all_foundations:
-                    result = analyzer.calculate_pile_loads(Fz, Mx, My, footing_type)
-                    result['assignment_method'] = 'Manual'
-        
-        elif assignment_method == "Group Assignment":
-            if hasattr(st.session_state, 'node_foundation_mapping') and node in st.session_state.node_foundation_mapping:
-                footing_type = st.session_state.node_foundation_mapping[node]
-                if footing_type in all_foundations:
-                    result = analyzer.calculate_pile_loads(Fz, Mx, My, footing_type)
-                    result['assignment_method'] = 'Group'
-        
-        elif assignment_method == "Load-Based Rules":
-            if hasattr(st.session_state, 'load_rules') and st.session_state.load_rules:
-                footing_type = None
-                for rule in st.session_state.load_rules:
-                    if rule['min'] <= Fz <= rule['max']:
-                        footing_type = rule['foundation']
-                        break
-                
-                if footing_type and footing_type in all_foundations:
-                    result = analyzer.calculate_pile_loads(Fz, Mx, My, footing_type)
-                    result['assignment_method'] = 'Rule-Based'
-        
-        # If no result yet, use automatic optimization
-        if result is None:
-            allowed = st.session_state.get('allowed_foundations', list(DEFAULT_PILE_CONFIGURATIONS.keys()))
-            allowed_configs = {k: all_foundations[k] for k in allowed if k in all_foundations}
-            
-            if allowed_configs:
-                results_list = []
-                for footing_key in allowed_configs.keys():
-                    analysis = analyzer.calculate_pile_loads(Fz, Mx, My, footing_key)
-                    analysis['footing_key'] = footing_key
-                    analysis['target_diff'] = abs(analysis['utilization_ratio'] - target_utilization)
-                    results_list.append(analysis)
-                
-                if results_list:
-                    df_results = pd.DataFrame(results_list)
-                    safe_designs = df_results[df_results['is_safe']]
-                    
-                    if len(safe_designs) > 0:
-                        optimal_idx = safe_designs['target_diff'].idxmin()
-                        result = safe_designs.loc[optimal_idx].to_dict()
-                    else:
-                        optimal_idx = df_results['utilization_ratio'].idxmin()
-                        result = df_results.loc[optimal_idx].to_dict()
-                    
-                    result['assignment_method'] = 'Auto-Optimized'
-                else:
-                    # Use default F4
-                    result = analyzer.calculate_pile_loads(Fz, Mx, My, 'F4')
-                    result['assignment_method'] = 'Default-F4'
-            else:
-                # Use default F4
-                result = analyzer.calculate_pile_loads(Fz, Mx, My, 'F4')
-                result['assignment_method'] = 'Default-F4'
-        
-        # Add node information
-        result['Node'] = node
-        result['Load_Case'] = row.get('Load Combination', row.get('Load Case', f'LC_{idx}'))
-        result['X'] = row.get('X', 0)
-        result['Y'] = row.get('Y', 0)
-        result['Z'] = row.get('Z', 0)
-        result['Fz'] = Fz
-        result['Mx'] = Mx
-        result['My'] = My
-        result['Target_Utilization'] = target_utilization
-        
-        all_results.append(result)
-    
-    return pd.DataFrame(all_results)state.node_foundation_mapping:
-            # Use group-assigned foundation
-            footing_type = st.session_state.node_foundation_mapping[node]
-            result = analyzer.calculate_pile_loads(Fz, Mx, My, footing_type)
-            result['assignment_method'] = 'Group'
-        
-        elif assignment_method == "Load-Based Rules" and st.session_state.load_rules:
-            # Apply load-based rules
-            footing_type = None
-            for rule in st.session_state.load_rules:
-                if rule['min'] <= Fz <= rule['max']:
-                    footing_type = rule['foundation']
-                    break
-            
-            if footing_type:
-                result = analyzer.calculate_pile_loads(Fz, Mx, My, footing_type)
-                result['assignment_method'] = 'Rule-Based'
-            else:
-                # No rule matched, use optimization
-                result = analyzer.find_optimal_footing(
-                    Fz, Mx, My, target_utilization,
-                    st.session_state.get('allowed_foundations', None)
-                )
-                result['assignment_method'] = 'Auto-Optimized'
-        
+        # Check for manual assignment
+        node = row['Node']
+        if node in st.session_state.node_assignments:
+            foundation_id = st.session_state.node_assignments[node]
+            result = analyzer.calculate_pile_loads(Fz, Mx, My, foundation_id)
+            result['assignment_method'] = 'Manual'
         else:
             # Automatic optimization
-            result = analyzer.find_optimal_footing(
-                Fz, Mx, My, target_utilization,
-                st.session_state.get('allowed_foundations', None)
-            )
-            result['assignment_method'] = 'Auto-Optimized'
+            allowed = st.session_state.allowed_foundations if st.session_state.allowed_foundations else None
+            result = analyzer.optimize_foundation(Fz, Mx, My, target_utilization, allowed)
+            result['assignment_method'] = 'Optimized'
         
-        # Add node information
-        result['Node'] = node
-        result['Load_Case'] = row.get('Load Combination', row.get('Load Case', f'LC_{idx}'))
-        result['X'] = row.get('X', 0)
-        result['Y'] = row.get('Y', 0)
-        result['Z'] = row.get('Z', 0)
-        result['Fz'] = Fz
-        result['Mx'] = Mx
-        result['My'] = My
-        result['Target_Utilization'] = target_utilization
-        
-        all_results.append(result)
-    
-    return pd.DataFrame(all_results)
-
-def create_foundation_summary_visualization(results_df):
-    """Create visualization showing foundation distribution including custom"""
-    
-    # Get all foundations reference
-    all_foundations = {**DEFAULT_PILE_CONFIGURATIONS, **st.session_state.custom_pile_configs}
-    
-    # Count foundations by type
-    foundation_counts = results_df['footing_type'].value_counts()
-    
-    # Create subplots
-    fig = make_subplots(
-        rows=2, cols=2,
-        subplot_titles=('Foundation Type Distribution', 'Utilization by Foundation',
-                       'Site Plan with Foundations', 'Foundation Efficiency'),
-        specs=[[{'type': 'pie'}, {'type': 'box'}],
-               [{'type': 'scatter'}, {'type': 'bar'}]]
-    )
-    
-    # 1. Pie chart of foundation types with custom colors
-    colors = []
-    for f in foundation_counts.index:
-        if f in DEFAULT_PILE_CONFIGURATIONS:
-            colors.append(DEFAULT_PILE_CONFIGURATIONS[f]['color'])
-        elif f in st.session_state.custom_pile_configs:
-            colors.append(st.session_state.custom_pile_configs[f]['color'])
-        else:
-            colors.append('#808080')
-    
-    fig.add_trace(
-        go.Pie(
-            labels=foundation_counts.index,
-            values=foundation_counts.values,
-            marker=dict(colors=colors),
-            textinfo='label+percent',
-            hovertemplate='%{label}: %{value} nodes<br>%{percent}'
-        ),
-        row=1, col=1
-    )
-    
-    # 2. Box plot of utilization by foundation
-    for foundation in results_df['footing_type'].unique():
-        data = results_df[results_df['footing_type'] == foundation]
-        
-        if foundation in all_foundations:
-            color = all_foundations[foundation]['color']
-        else:
-            color = '#808080'
+        if result:
+            # Add node information
+            result['Node'] = node
+            result['X'] = row.get('X', 0)
+            result['Y'] = row.get('Y', 0)
+            result['Z'] = row.get('Z', 0)
+            result['Fz'] = Fz
+            result['Mx'] = Mx
+            result['My'] = My
+            result['Load_Case'] = row.get('Load Combination', row.get('Load Case', f'LC_{idx}'))
             
-        fig.add_trace(
-            go.Box(
-                y=data['utilization_ratio'],
-                name=foundation,
-                marker_color=color,
-                boxmean='sd'
-            ),
-            row=1, col=2
-        )
+            results.append(result)
     
-    # 3. Site plan with foundations (if coordinates exist)
-    if 'X' in results_df.columns and 'Y' in results_df.columns:
-        for foundation in results_df['footing_type'].unique():
-            data = results_df[results_df['footing_type'] == foundation]
+    return pd.DataFrame(results)
+
+def create_custom_foundation_ui():
+    """UI for creating custom foundations"""
+    st.markdown("### 🛠️ Custom Foundation Designer")
+    
+    col1, col2 = st.columns([1, 1])
+    
+    with col1:
+        st.markdown("#### Foundation Details")
+        
+        custom_id = st.text_input("Foundation ID", value="CUSTOM1", key="custom_id")
+        custom_name = st.text_input("Foundation Name", value="Custom Foundation", key="custom_name")
+        custom_color = st.color_picker("Color", value="#FF00FF", key="custom_color")
+        
+        st.markdown("#### Pile Coordinates")
+        
+        input_method = st.radio("Input Method", ["Table", "Text", "Template"], key="input_method")
+        
+        if input_method == "Table":
+            n_piles = st.number_input("Number of Piles", 2, 50, 4, key="n_piles")
             
-            if foundation in all_foundations:
-                color = all_foundations[foundation]['color']
-                symbol = 'square' if foundation in st.session_state.custom_pile_configs else 'circle'
-            else:
-                color = '#808080'
-                symbol = 'circle'
-                
-            fig.add_trace(
-                go.Scatter(
-                    x=data['X'],
-                    y=data['Y'],
-                    mode='markers',
-                    name=foundation,
-                    marker=dict(
-                        size=data['n_piles']*2,
-                        color=color,
-                        symbol=symbol,
-                        line=dict(color='white', width=1),
-                        opacity=0.8
-                    ),
-                    text=[f"Node {n}<br>{f}" for n, f in zip(data['Node'], data['footing_type'])],
-                    hovertemplate='%{text}<br>X: %{x:.1f}<br>Y: %{y:.1f}'
-                ),
-                row=2, col=1
+            # Create coordinate table
+            coords_data = []
+            for i in range(n_piles):
+                coords_data.append({'Pile': f'P{i+1}', 'X': 0.0, 'Y': 0.0})
+            
+            df_coords = pd.DataFrame(coords_data)
+            edited_df = st.data_editor(df_coords, use_container_width=True, key="coords_table")
+            
+            coordinates = [(row['X'], row['Y']) for _, row in edited_df.iterrows()]
+            
+        elif input_method == "Text":
+            coord_text = st.text_area(
+                "Enter coordinates (x,y per line)",
+                value="0,2\n1.73,1\n1.73,-1\n0,-2\n-1.73,-1\n-1.73,1",
+                height=200,
+                key="coord_text"
             )
-    
-    # 4. Bar chart of average utilization by foundation
-    avg_utilization = results_df.groupby('footing_type')['utilization_ratio'].mean().sort_values()
-    colors = []
-    for f in avg_utilization.index:
-        if f in all_foundations:
-            colors.append(all_foundations[f]['color'])
-        else:
-            colors.append('#808080')
-    
-    fig.add_trace(
-        go.Bar(
-            x=avg_utilization.index,
-            y=avg_utilization.values,
-            marker_color=colors,
-            text=[f"{v:.1%}" for v in avg_utilization.values],
-            textposition='outside',
-            hovertemplate='%{x}: %{y:.2%}'
-        ),
-        row=2, col=2
-    )
-    
-    # Add target utilization line
-    fig.add_hline(y=0.85, line_dash="dash", line_color="red", 
-                  annotation_text="Target", row=2, col=2)
-    
-    # Update layout
-    fig.update_layout(
-        height=800,
-        showlegend=True,
-        title_text="Multi-Foundation Analysis Summary (Including Custom Foundations)",
-        title_x=0.5
-    )
-    
-    # Update axes
-    fig.update_xaxes(title_text="X Coordinate (m)", row=2, col=1)
-    fig.update_yaxes(title_text="Y Coordinate (m)", row=2, col=1)
-    fig.update_xaxes(title_text="Foundation Type", row=2, col=2)
-    fig.update_yaxes(title_text="Average Utilization", row=2, col=2)
-    fig.update_yaxes(title_text="Utilization Ratio", row=1, col=2)
-    
-    return fig
-    
-    # Create subplots
-    fig = make_subplots(
-        rows=2, cols=2,
-        subplot_titles=('Foundation Type Distribution', 'Utilization by Foundation',
-                       'Site Plan with Foundations', 'Foundation Efficiency'),
-        specs=[[{'type': 'pie'}, {'type': 'box'}],
-               [{'type': 'scatter'}, {'type': 'bar'}]]
-    )
-    
-    # 1. Pie chart of foundation types
-    fig.add_trace(
-        go.Pie(
-            labels=foundation_counts.index,
-            values=foundation_counts.values,
-            marker=dict(colors=[DEFAULT_PILE_CONFIGURATIONS[f]['color'] 
-                              for f in foundation_counts.index if f in DEFAULT_PILE_CONFIGURATIONS]),
-            textinfo='label+percent',
-            hovertemplate='%{label}: %{value} nodes<br>%{percent}'
-        ),
-        row=1, col=1
-    )
-    
-    # 2. Box plot of utilization by foundation
-    for foundation in results_df['footing_type'].unique():
-        data = results_df[results_df['footing_type'] == foundation]
-        color = DEFAULT_PILE_CONFIGURATIONS.get(foundation, {}).get('color', '#808080')
-        fig.add_trace(
-            go.Box(
-                y=data['utilization_ratio'],
-                name=foundation,
-                marker_color=color,
-                boxmean='sd'
-            ),
-            row=1, col=2
-        )
-    
-    # 3. Site plan with foundations (if coordinates exist)
-    if 'X' in results_df.columns and 'Y' in results_df.columns:
-        for foundation in results_df['footing_type'].unique():
-            data = results_df[results_df['footing_type'] == foundation]
-            color = DEFAULT_PILE_CONFIGURATIONS.get(foundation, {}).get('color', '#808080')
-            fig.add_trace(
-                go.Scatter(
-                    x=data['X'],
-                    y=data['Y'],
-                    mode='markers',
-                    name=foundation,
-                    marker=dict(
-                        size=data['n_piles']*2,
-                        color=color,
-                        line=dict(color='white', width=1),
-                        opacity=0.8
-                    ),
-                    text=[f"Node {n}<br>{f}" for n, f in zip(data['Node'], data['footing_type'])],
-                    hovertemplate='%{text}<br>X: %{x:.1f}<br>Y: %{y:.1f}'
-                ),
-                row=2, col=1
-            )
-    
-    # 4. Bar chart of average utilization by foundation
-    avg_utilization = results_df.groupby('footing_type')['utilization_ratio'].mean().sort_values()
-    colors = [DEFAULT_PILE_CONFIGURATIONS.get(f, {}).get('color', '#808080') for f in avg_utilization.index]
-    
-    fig.add_trace(
-        go.Bar(
-            x=avg_utilization.index,
-            y=avg_utilization.values,
-            marker_color=colors,
-            text=[f"{v:.1%}" for v in avg_utilization.values],
-            textposition='outside',
-            hovertemplate='%{x}: %{y:.2%}'
-        ),
-        row=2, col=2
-    )
-    
-    # Add target utilization line
-    fig.add_hline(y=0.85, line_dash="dash", line_color="red", 
-                  annotation_text="Target", row=2, col=2)
-    
-    # Update layout
-    fig.update_layout(
-        height=800,
-        showlegend=True,
-        title_text="Multi-Foundation Analysis Summary",
-        title_x=0.5
-    )
-    
-    # Update axes
-    fig.update_xaxes(title_text="X Coordinate (m)", row=2, col=1)
-    fig.update_yaxes(title_text="Y Coordinate (m)", row=2, col=1)
-    fig.update_xaxes(title_text="Foundation Type", row=2, col=2)
-    fig.update_yaxes(title_text="Average Utilization", row=2, col=2)
-    fig.update_yaxes(title_text="Utilization Ratio", row=1, col=2)
-    
-    return fig
-
-def create_foundation_comparison_table(results_df):
-    """Create comparison table of different foundations including custom"""
-    
-    all_foundations = {**DEFAULT_PILE_CONFIGURATIONS, **st.session_state.custom_pile_configs}
-    comparison_data = []
-    
-    for foundation in results_df['footing_type'].unique():
-        data = results_df[results_df['footing_type'] == foundation]
-        
-        if foundation in all_foundations:
-            config = all_foundations[foundation]
-            source = "Custom" if foundation in st.session_state.custom_pile_configs else "Default"
-        else:
-            config = {'name': 'Unknown', 'num_piles': 0}
-            source = "Unknown"
-        
-        comparison_data.append({
-            'Foundation': foundation,
-            'Source': source,
-            'Name': config.get('name', 'Unknown'),
-            'Piles': config.get('num_piles', 0),
-            'Nodes Using': len(data),
-            'Avg Utilization': f"{data['utilization_ratio'].mean():.1%}",
-            'Max Utilization': f"{data['utilization_ratio'].max():.1%}",
-            'Min Utilization': f"{data['utilization_ratio'].min():.1%}",
-            'Safe Designs': f"{len(data[data['is_safe']])}/{len(data)}",
-            'Total Piles': len(data) * config.get('num_piles', 0)
-        })
-    
-    comparison_df = pd.DataFrame(comparison_data)
-    comparison_df = comparison_df.sort_values('Nodes Using', ascending=False)
-    
-    return comparison_df
-        
-        comparison_data.append({
-            'Foundation': foundation,
-            'Name': config.get('name', 'Unknown'),
-            'Piles': config.get('num_piles', 0),
-            'Nodes Using': len(data),
-            'Avg Utilization': f"{data['utilization_ratio'].mean():.1%}",
-            'Max Utilization': f"{data['utilization_ratio'].max():.1%}",
-            'Min Utilization': f"{data['utilization_ratio'].min():.1%}",
-            'Safe Designs': f"{len(data[data['is_safe']])}/{len(data)}",
-            'Total Piles': len(data) * config.get('num_piles', 0)
-        })
-    
-    comparison_df = pd.DataFrame(comparison_data)
-    comparison_df = comparison_df.sort_values('Nodes Using', ascending=False)
-    
-    return comparison_df
-
-def load_data(uploaded_file):
-    """Load CSV file"""
-    try:
-        for encoding in ['utf-8', 'latin-1', 'cp1252']:
+            
+            coordinates = []
             try:
-                df = pd.read_csv(uploaded_file, encoding=encoding)
-                return df, f"Successfully loaded with {encoding} encoding"
-            except UnicodeDecodeError:
-                continue
-        return None, "Could not decode file"
-    except Exception as e:
-        return None, f"Error: {str(e)}"
+                for line in coord_text.strip().split('\n'):
+                    if line.strip():
+                        x, y = map(float, line.split(','))
+                        coordinates.append((x, y))
+            except:
+                st.error("Invalid coordinate format")
+                coordinates = []
+        
+        else:  # Template
+            template = st.selectbox("Select Template", 
+                                   ["Square", "Circle", "Rectangle", "Hexagon"],
+                                   key="template")
+            
+            if template == "Square":
+                n = st.slider("Grid Size", 2, 5, 3, key="square_n")
+                spacing = st.slider("Spacing", 1.0, 3.0, 1.5, 0.1, key="square_spacing")
+                coordinates = []
+                for i in range(n):
+                    for j in range(n):
+                        x = (j - (n-1)/2) * spacing
+                        y = (i - (n-1)/2) * spacing
+                        coordinates.append((x, y))
+            
+            elif template == "Circle":
+                n = st.slider("Number of Piles", 3, 20, 8, key="circle_n")
+                radius = st.slider("Radius", 1.0, 5.0, 2.0, 0.1, key="circle_radius")
+                center = st.checkbox("Include Center", key="circle_center")
+                
+                coordinates = []
+                if center:
+                    coordinates.append((0, 0))
+                for i in range(n):
+                    angle = 2 * np.pi * i / n
+                    x = radius * np.cos(angle)
+                    y = radius * np.sin(angle)
+                    coordinates.append((round(x, 2), round(y, 2)))
+            
+            elif template == "Rectangle":
+                rows = st.slider("Rows", 2, 6, 3, key="rect_rows")
+                cols = st.slider("Columns", 2, 6, 3, key="rect_cols")
+                spacing = st.slider("Spacing", 1.0, 3.0, 1.5, 0.1, key="rect_spacing")
+                
+                coordinates = []
+                for i in range(rows):
+                    for j in range(cols):
+                        x = (j - (cols-1)/2) * spacing
+                        y = (i - (rows-1)/2) * spacing
+                        coordinates.append((x, y))
+            
+            else:  # Hexagon
+                coordinates = [(0, 2), (1.73, 1), (1.73, -1), 
+                              (0, -2), (-1.73, -1), (-1.73, 1)]
+    
+    with col2:
+        st.markdown("#### Preview")
+        
+        if coordinates:
+            # Create visualization
+            coords_array = np.array(coordinates)
+            
+            fig = go.Figure()
+            
+            # Add piles
+            fig.add_trace(go.Scatter(
+                x=coords_array[:, 0],
+                y=coords_array[:, 1],
+                mode='markers+text',
+                marker=dict(size=25, color=custom_color, 
+                           symbol='circle', line=dict(color='darkblue', width=2)),
+                text=[f'P{i+1}' for i in range(len(coords_array))],
+                textposition='top center',
+                name='Piles'
+            ))
+            
+            # Add centroid
+            centroid_x = np.mean(coords_array[:, 0])
+            centroid_y = np.mean(coords_array[:, 1])
+            
+            fig.add_trace(go.Scatter(
+                x=[centroid_x],
+                y=[centroid_y],
+                mode='markers',
+                marker=dict(size=10, color='red', symbol='x'),
+                name='Centroid'
+            ))
+            
+            # Add grid
+            fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor='lightgray')
+            fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor='lightgray')
+            
+            fig.update_layout(
+                title=f'{custom_id}: {custom_name}',
+                xaxis_title='X (m)',
+                yaxis_title='Y (m)',
+                height=400,
+                showlegend=True,
+                xaxis=dict(scaleanchor="y"),
+                yaxis=dict(scaleanchor="x")
+            )
+            
+            st.plotly_chart(fig, use_container_width=True)
+            
+            # Calculate properties
+            st.markdown("#### Properties")
+            
+            x_coords = coords_array[:, 0] - centroid_x
+            y_coords = coords_array[:, 1] - centroid_y
+            
+            Ixx = np.sum(x_coords**2)
+            Iyy = np.sum(y_coords**2)
+            
+            col1_prop, col2_prop = st.columns(2)
+            with col1_prop:
+                st.metric("Number of Piles", len(coordinates))
+                st.metric("Ixx (m²)", f"{Ixx:.3f}")
+            
+            with col2_prop:
+                st.metric("Iyy (m²)", f"{Iyy:.3f}")
+                xmax = np.max(np.abs(x_coords))
+                ymax = np.max(np.abs(y_coords))
+                st.metric("Max Distance (m)", f"{max(xmax, ymax):.2f}")
+            
+            # Save button
+            if st.button("💾 Save Custom Foundation", type="primary", use_container_width=True):
+                custom_config = {
+                    'name': custom_name,
+                    'piles': len(coordinates),
+                    'color': custom_color,
+                    'coords': coordinates
+                }
+                st.session_state.custom_foundations[custom_id] = custom_config
+                st.success(f"✅ {custom_id} saved successfully!")
+                st.rerun()
+
+def create_visualizations(results_df):
+    """Create analysis visualizations"""
+    if results_df is None or len(results_df) == 0:
+        return None
+    
+    # Create subplots
+    fig = make_subplots(
+        rows=2, cols=2,
+        subplot_titles=('Foundation Distribution', 'Utilization by Type',
+                       'Load vs Utilization', 'Site Plan'),
+        specs=[[{'type': 'pie'}, {'type': 'box'}],
+               [{'type': 'scatter'}, {'type': 'scatter'}]]
+    )
+    
+    # 1. Pie chart
+    foundation_counts = results_df['foundation_id'].value_counts()
+    colors = [results_df[results_df['foundation_id'] == f]['color'].iloc[0] 
+             for f in foundation_counts.index]
+    
+    fig.add_trace(
+        go.Pie(labels=foundation_counts.index, 
+               values=foundation_counts.values,
+               marker=dict(colors=colors)),
+        row=1, col=1
+    )
+    
+    # 2. Box plot
+    for foundation in results_df['foundation_id'].unique():
+        data = results_df[results_df['foundation_id'] == foundation]
+        fig.add_trace(
+            go.Box(y=data['utilization_ratio'], name=foundation,
+                  marker_color=data['color'].iloc[0]),
+            row=1, col=2
+        )
+    
+    # 3. Load vs Utilization
+    fig.add_trace(
+        go.Scatter(x=results_df['Fz'], y=results_df['utilization_ratio'],
+                  mode='markers', marker=dict(size=10, color=results_df['n_piles'],
+                                             colorscale='Viridis'),
+                  text=results_df['Node'], name='Nodes'),
+        row=2, col=1
+    )
+    
+    # 4. Site plan (if coordinates exist)
+    if 'X' in results_df.columns and 'Y' in results_df.columns:
+        for foundation in results_df['foundation_id'].unique():
+            data = results_df[results_df['foundation_id'] == foundation]
+            fig.add_trace(
+                go.Scatter(x=data['X'], y=data['Y'],
+                          mode='markers+text',
+                          marker=dict(size=15, color=data['color'].iloc[0]),
+                          text=data['Node'], textposition='top center',
+                          name=foundation),
+                row=2, col=2
+            )
+    
+    fig.update_layout(height=800, showlegend=True, title_text="Pile Foundation Analysis Results")
+    
+    return fig
 
 # ===================== SIDEBAR =====================
 st.sidebar.title("📋 Configuration")
 
-uploaded_file = st.sidebar.file_uploader(
-    "📁 Upload CSV File",
-    type=['csv']
-)
+# File upload
+uploaded_file = st.sidebar.file_uploader("Upload CSV File", type=['csv'])
 
+# Pile parameters
 st.sidebar.subheader("🔧 Pile Parameters")
+pile_diameter = st.sidebar.number_input("Pile Diameter (m)", 0.3, 2.0, 0.6, 0.1)
+pile_capacity = st.sidebar.number_input("Pile Capacity (tonf)", 50, 500, 120, 10)
+pile_spacing = st.sidebar.number_input("Pile Spacing (m)", 1.0, 5.0, 1.5, 0.1)
+target_utilization = st.sidebar.slider("Target Utilization", 0.7, 0.95, 0.85, 0.05)
 
-pile_diameter = st.sidebar.number_input(
-    "Pile Diameter (m)",
-    0.3, 2.0, 0.6, 0.1
-)
-
-pile_capacity = st.sidebar.number_input(
-    "Pile Capacity (tonf)",
-    50, 500, 120, 10
-)
-
-pile_spacing = st.sidebar.number_input(
-    "Pile Spacing (m)",
-    1.0, 5.0, 1.5, 0.1
-)
-
-safety_factor = st.sidebar.number_input(
-    "Safety Factor",
-    1.0, 3.0, 1.5, 0.1
-)
-
-target_utilization = st.sidebar.slider(
-    "Target Utilization",
-    0.70, 0.95, 0.85, 0.05
-)
-
-# Check minimum spacing
-min_spacing = 2.5 * pile_diameter
-if pile_spacing < min_spacing:
-    st.sidebar.warning(f"⚠️ Spacing should be ≥ {min_spacing:.1f}m")
-
+# Node selection
 st.sidebar.subheader("🎯 Node Selection")
-use_default_nodes = st.sidebar.checkbox("Use Default Nodes", value=True)
+use_default = st.sidebar.checkbox("Use Default Nodes", value=True)
 
-if use_default_nodes:
+if use_default:
     selected_nodes = DEFAULT_NODES
-    st.sidebar.info(f"Using {len(DEFAULT_NODES)} nodes")
 else:
-    nodes_input = st.sidebar.text_area(
-        "Enter Node Numbers",
-        value=",".join(map(str, DEFAULT_NODES[:5]))
-    )
+    node_input = st.sidebar.text_area("Enter nodes (comma-separated)", 
+                                      value=",".join(map(str, DEFAULT_NODES[:5])))
     try:
-        selected_nodes = [int(x.strip()) for x in nodes_input.split(",") if x.strip()]
-        st.sidebar.success(f"Selected {len(selected_nodes)} nodes")
+        selected_nodes = [int(x.strip()) for x in node_input.split(",")]
     except:
-        st.sidebar.error("Invalid format")
         selected_nodes = DEFAULT_NODES[:5]
+        st.sidebar.error("Invalid node format")
 
-# ===================== MAIN TABS =====================
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
-    "🏗️ Foundation Assignment",
-    "🛠️ Custom Foundation Designer",
-    "📊 Data Input",
-    "🔬 Analysis Results",
-    "📈 Visualizations",
-    "📋 Comparison",
-    "🧮 Details",
+st.sidebar.info(f"Selected {len(selected_nodes)} nodes")
+
+# ===================== MAIN CONTENT - TABS =====================
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    "📚 Theory & Setup",
+    "🛠️ Custom Foundations",
+    "📊 Data & Analysis",
+    "📈 Results & Visualization",
     "💾 Export"
 ])
 
 with tab1:
-    st.markdown('<h2 class="section-header">🏗️ Multi-Foundation Assignment</h2>', unsafe_allow_html=True)
+    st.markdown('<h2 class="section-header">📚 Theory & Foundation Setup</h2>', unsafe_allow_html=True)
     
-    # Foundation library display
-    col1, col2 = st.columns([1, 2])
+    col1, col2 = st.columns([2, 1])
     
     with col1:
-        st.markdown("### 📚 Available Foundations")
+        st.markdown("""
+        ### Pile Group Design Formula
         
-        # Tab for default and custom foundations
-        foundation_tabs = st.tabs(["Default", "Custom"])
+        <div class="formula-box">
+        <strong>Maximum Pile Load:</strong><br>
+        P<sub>max</sub> = P/n + |M<sub>y</sub>|/Z<sub>x</sub> + |M<sub>x</sub>|/Z<sub>y</sub>
+        <br><br>
+        Where:<br>
+        • P = Vertical load (tonf)<br>
+        • n = Number of piles<br>
+        • M<sub>x</sub>, M<sub>y</sub> = Moments (tonf·m)<br>
+        • Z<sub>x</sub> = I<sub>xx</sub>/x<sub>max</sub> (Section modulus)<br>
+        • Z<sub>y</sub> = I<sub>yy</sub>/y<sub>max</sub> (Section modulus)
+        </div>
+        """, unsafe_allow_html=True)
         
-        with foundation_tabs[0]:
-            for ftype, config in DEFAULT_PILE_CONFIGURATIONS.items():
-                st.markdown(f"""
-                <div class="foundation-card" style="border-left-color: {config['color']}">
-                <strong>{ftype}</strong>: {config['name']}<br>
-                <small>• {config['num_piles']} piles<br>
-                • {config['arrangement']}</small>
-                </div>
-                """, unsafe_allow_html=True)
-        
-        with foundation_tabs[1]:
-            if st.session_state.custom_pile_configs:
-                for ftype, config in st.session_state.custom_pile_configs.items():
-                    st.markdown(f"""
-                    <div class="foundation-card" style="border-left-color: {config['color']}">
-                    <strong>{ftype}</strong>: {config['name']}<br>
-                    <small>• {config['num_piles']} piles<br>
-                    • {config['arrangement']}</small>
-                    </div>
-                    """, unsafe_allow_html=True)
-            else:
-                st.info("No custom foundations yet")
-    
-    with col2:
-        st.markdown("### 🎯 Assignment Configuration")
-        
-        # Include custom foundations in options
-        all_foundations = {**DEFAULT_PILE_CONFIGURATIONS, **st.session_state.custom_pile_configs}
+        st.markdown("### Foundation Assignment")
         
         assignment_method = st.radio(
-            "Choose assignment method:",
-            ["Automatic Optimization", "Manual Assignment", "Group Assignment", "Load-Based Rules"]
+            "Assignment Method",
+            ["Automatic Optimization", "Manual Assignment", "Selected Foundations Only"]
         )
         
         if assignment_method == "Automatic Optimization":
-            st.markdown("""
-            <div class="optimal-design">
-            <strong>🤖 Automatic Optimization</strong><br>
-            System will automatically select the optimal foundation for each node
-            </div>
-            """, unsafe_allow_html=True)
-            
-            # Select allowed foundations (including custom)
-            allowed_foundations = st.multiselect(
-                "Select foundations to consider:",
-                options=list(all_foundations.keys()),
-                default=list(DEFAULT_PILE_CONFIGURATIONS.keys())[:5]
-            )
-            st.session_state['allowed_foundations'] = allowed_foundations
+            st.info("System will automatically select optimal foundation for each node")
             
         elif assignment_method == "Manual Assignment":
-            # Manual assignment with custom foundations
-            col1_manual, col2_manual = st.columns(2)
+            st.warning("Manually assign foundations to specific nodes")
             
-            with col1_manual:
-                selected_nodes_manual = st.multiselect(
-                    "Select nodes:",
-                    options=DEFAULT_NODES
-                )
+            manual_nodes = st.multiselect("Select Nodes", selected_nodes)
+            all_foundations = {**DEFAULT_FOUNDATIONS, **st.session_state.custom_foundations}
+            manual_foundation = st.selectbox("Assign Foundation", list(all_foundations.keys()))
             
-            with col2_manual:
-                foundation_manual = st.selectbox(
-                    "Assign foundation:",
-                    options=list(all_foundations.keys())
-                )
-            
-            if st.button("➕ Add Assignment"):
-                if 'temp_assignments' not in st.session_state:
-                    st.session_state.temp_assignments = {}
-                for node in selected_nodes_manual:
-                    st.session_state.temp_assignments[node] = foundation_manual
-                st.success(f"Assigned {foundation_manual} to {len(selected_nodes_manual)} nodes")
+            if st.button("Apply Assignment"):
+                for node in manual_nodes:
+                    st.session_state.node_assignments[node] = manual_foundation
+                st.success(f"Assigned {manual_foundation} to {len(manual_nodes)} nodes")
         
-        st.session_state['assignment_method'] = assignment_method
+        else:  # Selected Foundations Only
+            all_foundations = {**DEFAULT_FOUNDATIONS, **st.session_state.custom_foundations}
+            selected_foundations = st.multiselect(
+                "Select Allowed Foundations",
+                list(all_foundations.keys()),
+                default=list(DEFAULT_FOUNDATIONS.keys())[:5]
+            )
+            st.session_state.allowed_foundations = selected_foundations
+    
+    with col2:
+        st.markdown("### Available Foundations")
+        
+        # Default foundations
+        st.markdown("**Default Foundations:**")
+        for fid, config in DEFAULT_FOUNDATIONS.items():
+            st.markdown(f"""
+            <div class="foundation-card" style="border-left-color: {config['color']}">
+            <strong>{fid}</strong>: {config['name']}<br>
+            <small>{config['piles']} piles</small>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        # Custom foundations
+        if st.session_state.custom_foundations:
+            st.markdown("**Custom Foundations:**")
+            for fid, config in st.session_state.custom_foundations.items():
+                st.markdown(f"""
+                <div class="foundation-card" style="border-left-color: {config['color']}">
+                <strong>{fid}</strong>: {config['name']}<br>
+                <small>{config['piles']} piles</small>
+                </div>
+                """, unsafe_allow_html=True)
 
 with tab2:
     st.markdown('<h2 class="section-header">🛠️ Custom Foundation Designer</h2>', unsafe_allow_html=True)
     
-    # Create custom foundation designer
-    create_custom_foundation_designer()
+    create_custom_foundation_ui()
     
-    st.markdown("---")
-    
-    # Display library
-    display_custom_foundation_library()
-    
-    # Export/Import custom foundations
-    st.markdown("### 💾 Export/Import Custom Foundations")
-    
-    col1_io, col2_io = st.columns(2)
-    
-    with col1_io:
-        if st.session_state.custom_pile_configs:
-            custom_json = json.dumps(st.session_state.custom_pile_configs, indent=2)
-            st.download_button(
-                "📥 Export Custom Foundations (JSON)",
-                data=custom_json,
-                file_name=f"custom_foundations_{datetime.now().strftime('%Y%m%d')}.json",
-                mime="application/json"
-            )
-    
-    with col2_io:
-        uploaded_json = st.file_uploader(
-            "📤 Import Custom Foundations",
-            type=['json']
-        )
+    # Display saved custom foundations
+    if st.session_state.custom_foundations:
+        st.markdown("### 📚 Saved Custom Foundations")
         
-        if uploaded_json:
-            try:
-                imported_configs = json.load(uploaded_json)
-                st.session_state.custom_pile_configs.update(imported_configs)
-                st.success(f"Imported {len(imported_configs)} custom foundations")
-                st.rerun()
-            except Exception as e:
-                st.error(f"Error importing: {e}")
+        for fid, config in st.session_state.custom_foundations.items():
+            with st.expander(f"{fid}: {config['name']} ({config['piles']} piles)"):
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.write(f"**Piles:** {config['piles']}")
+                    st.write(f"**Color:** {config['color']}")
+                with col2:
+                    if st.button(f"Delete {fid}", key=f"del_{fid}"):
+                        del st.session_state.custom_foundations[fid]
+                        st.rerun()
 
 with tab3:
-    st.markdown('<h2 class="section-header">📊 Data Input</h2>', unsafe_allow_html=True)
+    st.markdown('<h2 class="section-header">📊 Data Input & Analysis</h2>', unsafe_allow_html=True)
     
-    if uploaded_file is not None:
-        df, message = load_data(uploaded_file)
+    if uploaded_file:
+        df, message = load_csv_file(uploaded_file)
         
         if df is not None:
             st.success(message)
@@ -1234,417 +736,78 @@ with tab3:
             with col2:
                 st.metric("Columns", len(df.columns))
             with col3:
-                if 'Node' in df.columns:
-                    st.metric("Unique Nodes", df['Node'].nunique())
+                st.metric("Unique Nodes", df['Node'].nunique() if 'Node' in df.columns else 0)
             with col4:
-                total_foundations = len(DEFAULT_PILE_CONFIGURATIONS) + len(st.session_state.custom_pile_configs)
+                total_foundations = len(DEFAULT_FOUNDATIONS) + len(st.session_state.custom_foundations)
                 st.metric("Available Foundations", total_foundations)
             
-            # Preview
-            with st.expander("👁️ Preview Data"):
+            # Preview data
+            with st.expander("Preview Data"):
                 st.dataframe(df.head(10), use_container_width=True)
             
-            # Show available foundations summary
-            st.subheader("🏗️ Foundation Options")
-            col1_found, col2_found = st.columns(2)
-            
-            with col1_found:
-                st.write(f"**Default Foundations:** {len(DEFAULT_PILE_CONFIGURATIONS)}")
-                st.write(f"**Custom Foundations:** {len(st.session_state.custom_pile_configs)}")
-            
-            with col2_found:
-                if st.session_state.custom_pile_configs:
-                    st.write("**Custom Types:**")
-                    for custom_id in list(st.session_state.custom_pile_configs.keys())[:5]:
-                        st.write(f"• {custom_id}")
-            
-            # Run analysis button
-            if st.button("🚀 Run Multi-Foundation Analysis", type="primary", use_container_width=True):
-                with st.spinner("Analyzing with multiple foundation types..."):
-                    try:
-                        # Create analyzer
-                        analyzer = PileGroupAnalyzer(
-                            pile_diameter=pile_diameter,
-                            pile_capacity=pile_capacity,
-                            pile_spacing=pile_spacing,
-                            safety_factor=safety_factor
-                        )
-                        
-                        # Process with multi-foundation support
-                        results = process_multi_foundation_analysis(
-                            df, 
-                            selected_nodes,
-                            analyzer,
-                            st.session_state.get('assignment_method', 'Automatic Optimization'),
-                            target_utilization
-                        )
-                        
-                        if results is not None and len(results) > 0:
-                            st.session_state.final_results = results
-                            
-                            # Count custom vs default
-                            custom_used = sum(1 for f in results['footing_type'].unique() 
-                                            if f in st.session_state.custom_pile_configs)
-                            default_used = results['footing_type'].nunique() - custom_used
-                            
-                            st.success(f"✅ Analysis completed! Used {default_used} default + {custom_used} custom foundation types")
-                            st.balloons()
-                        else:
-                            st.error("No data found")
-                    except Exception as e:
-                        st.error(f"Error: {str(e)}")
+            # Run analysis
+            if st.button("🚀 Run Analysis", type="primary", use_container_width=True):
+                with st.spinner("Analyzing..."):
+                    analyzer = PileAnalyzer(pile_diameter, pile_capacity, pile_spacing)
+                    results = process_analysis(df, selected_nodes, analyzer, target_utilization)
+                    
+                    if results is not None and len(results) > 0:
+                        st.session_state.final_results = results
+                        st.success(f"✅ Analysis completed for {len(results)} nodes!")
+                        st.balloons()
+                    else:
+                        st.error("No valid results generated")
         else:
             st.error(message)
     else:
-        st.info("👈 Please upload a CSV file")
+        st.info("Please upload a CSV file to begin analysis")
         
-        # Show example format
-        st.subheader("Expected Format")
+        # Show expected format
+        st.subheader("Expected Data Format")
         example_df = pd.DataFrame({
             'Node': [789, 790, 791],
             'X': [0, 10, 20],
             'Y': [0, 0, 0],
-            'FZ (tonf)': [300, 450, 600],
-            'MX (tonf·m)': [50, 80, 100],
-            'MY (tonf·m)': [40, 60, 80]
+            'FZ (tonf)': [400, 350, 450],
+            'MX (tonf·m)': [80, 70, 90],
+            'MY (tonf·m)': [60, 50, 70]
         })
-        st.dataframe(example_df)
+        st.dataframe(example_df, use_container_width=True)
 
 with tab4:
-    st.markdown('<h2 class="section-header">🔬 Analysis Results</h2>', unsafe_allow_html=True)
+    st.markdown('<h2 class="section-header">📈 Results & Visualization</h2>', unsafe_allow_html=True)
     
     if st.session_state.final_results is not None:
         results = st.session_state.final_results
         
-        # Get all foundations for reference
-        all_foundations = {**DEFAULT_PILE_CONFIGURATIONS, **st.session_state.custom_pile_configs}
-        
         # Summary metrics
-        col1, col2, col3, col4, col5 = st.columns(5)
-        
+        col1, col2, col3, col4 = st.columns(4)
         with col1:
-            st.metric("Total Nodes", len(results))
+            st.metric("Nodes Analyzed", len(results))
         with col2:
-            st.metric("Foundation Types", results['footing_type'].nunique())
-        with col3:
             st.metric("Avg Utilization", f"{results['utilization_ratio'].mean():.1%}")
-        with col4:
+        with col3:
             safe_count = len(results[results['is_safe']])
             st.metric("Safe Designs", f"{safe_count}/{len(results)}")
-        with col5:
+        with col4:
             total_piles = results['n_piles'].sum()
             st.metric("Total Piles", int(total_piles))
         
-        # Separate custom and default foundations
-        custom_foundations = [f for f in results['footing_type'].unique() 
-                            if f in st.session_state.custom_pile_configs]
-        default_foundations = [f for f in results['footing_type'].unique() 
-                              if f in DEFAULT_PILE_CONFIGURATIONS]
+        # Results table
+        st.subheader("Analysis Results")
+        display_cols = ['Node', 'foundation_id', 'n_piles', 'Fz', 'max_pile_load', 
+                       'utilization_ratio', 'category', 'is_safe']
+        st.dataframe(results[display_cols], use_container_width=True)
         
-        # Foundation distribution
-        st.subheader("🏗️ Foundation Type Distribution")
-        
-        col1_dist, col2_dist = st.columns(2)
-        
-        with col1_dist:
-            if default_foundations:
-                st.write("**Default Foundations Used:**")
-                for found in default_foundations:
-                    count = len(results[results['footing_type'] == found])
-                    config = DEFAULT_PILE_CONFIGURATIONS[found]
-                    st.markdown(f"""
-                    <div style="border-left: 4px solid {config['color']}; padding-left: 10px; margin: 5px 0;">
-                    <strong>{found}</strong>: {count} nodes ({config['num_piles']} piles each)
-                    </div>
-                    """, unsafe_allow_html=True)
-        
-        with col2_dist:
-            if custom_foundations:
-                st.write("**Custom Foundations Used:**")
-                for found in custom_foundations:
-                    count = len(results[results['footing_type'] == found])
-                    config = st.session_state.custom_pile_configs[found]
-                    st.markdown(f"""
-                    <div style="border-left: 4px solid {config['color']}; padding-left: 10px; margin: 5px 0;">
-                    <strong>{found}</strong>: {count} nodes ({config['num_piles']} piles each)
-                    </div>
-                    """, unsafe_allow_html=True)
-        
-        # Detailed results table
-        st.subheader("📋 Detailed Results")
-        
-        display_cols = ['Node', 'footing_type', 'n_piles', 'Fz', 'Mx', 'My',
-                       'max_pile_load', 'utilization_ratio', 'category', 
-                       'assignment_method', 'is_safe']
-        
-        # Add foundation source column
-        results_display = results[display_cols].copy()
-        results_display['Type'] = results_display['footing_type'].apply(
-            lambda x: '🏭 Default' if x in DEFAULT_PILE_CONFIGURATIONS else '🛠️ Custom'
-        )
-        
-        st.dataframe(results_display, use_container_width=True, height=400)
-        
+        # Visualizations
+        st.subheader("Visualizations")
+        fig = create_visualizations(results)
+        if fig:
+            st.plotly_chart(fig, use_container_width=True)
     else:
-        st.info("No results yet. Please run analysis.")
+        st.info("No results to display. Please run analysis first.")
 
 with tab5:
-    st.markdown('<h2 class="section-header">📈 Visualizations</h2>', unsafe_allow_html=True)
-    
-    if st.session_state.final_results is not None:
-        results = st.session_state.final_results
-        all_foundations = {**DEFAULT_PILE_CONFIGURATIONS, **st.session_state.custom_pile_configs}
-        
-        # Create comprehensive visualization
-        fig = create_foundation_summary_visualization(results)
-        st.plotly_chart(fig, use_container_width=True)
-        
-        # Site plan with custom foundations highlighted
-        if 'X' in results.columns and 'Y' in results.columns:
-            st.subheader("🗺️ Site Plan - Foundation Distribution")
-            
-            fig_site = go.Figure()
-            
-            # Plot each foundation type
-            for foundation in results['footing_type'].unique():
-                data = results[results['footing_type'] == foundation]
-                
-                # Get color from config
-                if foundation in DEFAULT_PILE_CONFIGURATIONS:
-                    color = DEFAULT_PILE_CONFIGURATIONS[foundation]['color']
-                    symbol = 'circle'
-                    marker_size = 15
-                elif foundation in st.session_state.custom_pile_configs:
-                    color = st.session_state.custom_pile_configs[foundation]['color']
-                    symbol = 'square'  # Different symbol for custom
-                    marker_size = 18
-                else:
-                    color = '#808080'
-                    symbol = 'circle'
-                    marker_size = 15
-                
-                # Determine if custom or default
-                foundation_type = '(Custom)' if foundation in st.session_state.custom_pile_configs else '(Default)'
-                
-                fig_site.add_trace(go.Scatter(
-                    x=data['X'],
-                    y=data['Y'],
-                    mode='markers+text',
-                    name=f'{foundation} {foundation_type}',
-                    marker=dict(
-                        size=marker_size,
-                        color=color,
-                        symbol=symbol,
-                        line=dict(color='white', width=2)
-                    ),
-                    text=data['Node'],
-                    textposition='top center',
-                    textfont=dict(size=8),
-                    hovertemplate='Node: %{text}<br>Foundation: ' + foundation + 
-                                 '<br>X: %{x:.1f}<br>Y: %{y:.1f}<br>Type: ' + foundation_type
-                ))
-            
-            fig_site.update_layout(
-                title='Site Plan - Foundation Type Distribution (Squares = Custom, Circles = Default)',
-                xaxis_title='X Coordinate (m)',
-                yaxis_title='Y Coordinate (m)',
-                height=600,
-                hovermode='closest',
-                showlegend=True
-            )
-            
-            st.plotly_chart(fig_site, use_container_width=True)
-        
-        # Custom foundation performance
-        if any(f in st.session_state.custom_pile_configs for f in results['footing_type'].unique()):
-            st.subheader("📊 Custom Foundation Performance")
-            
-            custom_results = results[results['footing_type'].isin(st.session_state.custom_pile_configs.keys())]
-            
-            if not custom_results.empty:
-                fig_custom = px.box(
-                    custom_results,
-                    x='footing_type',
-                    y='utilization_ratio',
-                    title='Custom Foundation Utilization Distribution',
-                    color='footing_type',
-                    color_discrete_map={f: st.session_state.custom_pile_configs[f]['color'] 
-                                       for f in custom_results['footing_type'].unique()}
-                )
-                fig_custom.add_hline(y=0.85, line_dash="dash", line_color="red", 
-                                   annotation_text="Target")
-                fig_custom.add_hline(y=1.0, line_dash="solid", line_color="darkred", 
-                                   annotation_text="Limit")
-                st.plotly_chart(fig_custom, use_container_width=True)
-        
-    else:
-        st.info("No results to visualize")
-
-with tab6:
-    st.markdown('<h2 class="section-header">📋 Foundation Comparison</h2>', unsafe_allow_html=True)
-    
-    if st.session_state.final_results is not None:
-        results = st.session_state.final_results
-        all_foundations = {**DEFAULT_PILE_CONFIGURATIONS, **st.session_state.custom_pile_configs}
-        
-        # Create comparison including custom foundations
-        comparison_data = []
-        
-        for foundation in results['footing_type'].unique():
-            data = results[results['footing_type'] == foundation]
-            
-            # Get config from either default or custom
-            if foundation in DEFAULT_PILE_CONFIGURATIONS:
-                config = DEFAULT_PILE_CONFIGURATIONS[foundation]
-                source = "Default"
-            elif foundation in st.session_state.custom_pile_configs:
-                config = st.session_state.custom_pile_configs[foundation]
-                source = "Custom"
-            else:
-                continue
-            
-            comparison_data.append({
-                'Foundation': foundation,
-                'Source': source,
-                'Name': config.get('name', 'Unknown'),
-                'Piles': config.get('num_piles', 0),
-                'Nodes Using': len(data),
-                'Avg Utilization': f"{data['utilization_ratio'].mean():.1%}",
-                'Max Utilization': f"{data['utilization_ratio'].max():.1%}",
-                'Safe Designs': f"{len(data[data['is_safe']])}/{len(data)}",
-                'Total Piles': len(data) * config.get('num_piles', 0)
-            })
-        
-        comparison_df = pd.DataFrame(comparison_data)
-        comparison_df = comparison_df.sort_values('Nodes Using', ascending=False)
-        
-        st.dataframe(comparison_df, use_container_width=True)
-        
-        # Highlight custom foundations performance
-        if any(row['Source'] == 'Custom' for _, row in comparison_df.iterrows()):
-            st.subheader("🛠️ Custom Foundation Analysis")
-            
-            custom_only = comparison_df[comparison_df['Source'] == 'Custom']
-            default_only = comparison_df[comparison_df['Source'] == 'Default']
-            
-            col1_perf, col2_perf = st.columns(2)
-            
-            with col1_perf:
-                if not custom_only.empty:
-                    st.metric("Custom Foundations Used", len(custom_only))
-                    st.metric("Total Nodes (Custom)", custom_only['Nodes Using'].sum())
-                    st.metric("Total Piles (Custom)", custom_only['Total Piles'].sum())
-            
-            with col2_perf:
-                if not default_only.empty:
-                    st.metric("Default Foundations Used", len(default_only))
-                    st.metric("Total Nodes (Default)", default_only['Nodes Using'].sum())
-                    st.metric("Total Piles (Default)", default_only['Total Piles'].sum())
-        
-    else:
-        st.info("No results for comparison")
-
-with tab7:
-    st.markdown('<h2 class="section-header">🧮 Detailed Calculations</h2>', unsafe_allow_html=True)
-    
-    if st.session_state.final_results is not None:
-        results = st.session_state.final_results
-        all_foundations = {**DEFAULT_PILE_CONFIGURATIONS, **st.session_state.custom_pile_configs}
-        
-        # Node selector
-        selected_node = st.selectbox(
-            "Select node for detailed view:",
-            results['Node'].unique()
-        )
-        
-        node_data = results[results['Node'] == selected_node].iloc[0]
-        foundation_type = node_data['footing_type']
-        
-        # Get foundation config
-        if foundation_type in DEFAULT_PILE_CONFIGURATIONS:
-            config = DEFAULT_PILE_CONFIGURATIONS[foundation_type]
-            source = "Default Library"
-        elif foundation_type in st.session_state.custom_pile_configs:
-            config = st.session_state.custom_pile_configs[foundation_type]
-            source = "Custom Design"
-        else:
-            config = {'name': 'Unknown', 'coordinates': []}
-            source = "Unknown"
-        
-        # Display foundation layout
-        st.subheader(f"Foundation Layout: {foundation_type} ({source})")
-        
-        if 'coordinates' in config and config['coordinates']:
-            coords = np.array(config['coordinates']) * pile_spacing
-            
-            fig_layout = go.Figure()
-            
-            # Add piles
-            fig_layout.add_trace(go.Scatter(
-                x=coords[:, 0],
-                y=coords[:, 1],
-                mode='markers+text',
-                marker=dict(
-                    size=25,
-                    color=config.get('color', '#808080'),
-                    symbol='circle',
-                    line=dict(color='darkblue', width=2)
-                ),
-                text=[f'P{i+1}' for i in range(len(coords))],
-                textposition='top center',
-                name='Piles'
-            ))
-            
-            # Add centroid
-            fig_layout.add_trace(go.Scatter(
-                x=[0],
-                y=[0],
-                mode='markers',
-                marker=dict(size=10, color='red', symbol='x'),
-                name='Centroid'
-            ))
-            
-            fig_layout.update_layout(
-                title=f'{foundation_type}: {config["name"]}',
-                xaxis_title='X (m)',
-                yaxis_title='Y (m)',
-                height=400,
-                xaxis=dict(scaleanchor="y", scaleratio=1, gridcolor='lightgray'),
-                yaxis=dict(scaleanchor="x", scaleratio=1, gridcolor='lightgray')
-            )
-            
-            st.plotly_chart(fig_layout, use_container_width=True)
-        
-        # Calculation details
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            st.markdown("### 📥 Loads")
-            st.write(f"**Fz:** {node_data['Fz']:.2f} tonf")
-            st.write(f"**Mx:** {node_data['Mx']:.2f} tonf·m")
-            st.write(f"**My:** {node_data['My']:.2f} tonf·m")
-            st.write(f"**Source:** {source}")
-        
-        with col2:
-            st.markdown("### 📐 Properties")
-            st.write(f"**Ixx:** {node_data['Ixx']:.3f} m²")
-            st.write(f"**Iyy:** {node_data['Iyy']:.3f} m²")
-            st.write(f"**Zx:** {node_data['Zx']:.3f} m³")
-            st.write(f"**Zy:** {node_data['Zy']:.3f} m³")
-        
-        with col3:
-            st.markdown("### 📊 Results")
-            st.write(f"**P_max:** {node_data['max_pile_load']:.2f} tonf")
-            st.write(f"**Utilization:** {node_data['utilization_ratio']:.1%}")
-            st.write(f"**Category:** {node_data['category']}")
-            if node_data['is_safe']:
-                st.success("✅ SAFE")
-            else:
-                st.error("❌ UNSAFE")
-    else:
-        st.info("No results available")
-
-with tab8:
     st.markdown('<h2 class="section-header">💾 Export Results</h2>', unsafe_allow_html=True)
     
     if st.session_state.final_results is not None:
@@ -1653,19 +816,20 @@ with tab8:
         col1, col2 = st.columns(2)
         
         with col1:
-            # Export main results
+            # Export CSV
             csv = results.to_csv(index=False)
             st.download_button(
-                "📥 Download Analysis Results (CSV)",
+                "📥 Download Results (CSV)",
                 data=csv,
                 file_name=f"pile_analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
                 mime="text/csv",
                 use_container_width=True
             )
-            
+        
+        with col2:
             # Export custom foundations
-            if st.session_state.custom_pile_configs:
-                custom_json = json.dumps(st.session_state.custom_pile_configs, indent=2)
+            if st.session_state.custom_foundations:
+                custom_json = json.dumps(st.session_state.custom_foundations, indent=2)
                 st.download_button(
                     "📥 Export Custom Foundations (JSON)",
                     data=custom_json,
@@ -1674,14 +838,8 @@ with tab8:
                     use_container_width=True
                 )
         
-        with col2:
-            # Generate comprehensive report
-            custom_count = sum(1 for f in results['footing_type'].unique() 
-                             if f in st.session_state.custom_pile_configs)
-            default_count = sum(1 for f in results['footing_type'].unique() 
-                              if f in DEFAULT_PILE_CONFIGURATIONS)
-            
-            report = f"""# Multi-Foundation Analysis Report
+        # Generate report
+        report = f"""# Pile Foundation Analysis Report
 Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 
 ## Configuration
@@ -1690,395 +848,24 @@ Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 - Pile Spacing: {pile_spacing} m
 - Target Utilization: {target_utilization:.0%}
 
-## Foundation Types
-- Default Foundations Used: {default_count}
-- Custom Foundations Used: {custom_count}
-- Total Foundation Types: {results['footing_type'].nunique()}
-
 ## Results Summary
 - Total Nodes: {len(results)}
 - Average Utilization: {results['utilization_ratio'].mean():.1%}
 - Safe Designs: {len(results[results['is_safe']])} / {len(results)}
-- Total Piles: {results['n_piles'].sum()}
-
-## Custom Foundations List
-{', '.join(st.session_state.custom_pile_configs.keys()) if st.session_state.custom_pile_configs else 'None'}
-"""
-            
-            st.download_button(
-                "📄 Download Report (MD)",
-                data=report,
-                file_name=f"analysis_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md",
-                mime="text/markdown",
-                use_container_width=True
-            )
-        
-        st.success("✅ All export options ready!")
-    else:
-        st.info("No results to export")
-    st.markdown('<h2 class="section-header">📊 Data Input</h2>', unsafe_allow_html=True)
-    
-    if uploaded_file is not None:
-        df, message = load_data(uploaded_file)
-        
-        if df is not None:
-            st.success(message)
-            
-            # Data overview
-            col1, col2, col3, col4 = st.columns(4)
-            with col1:
-                st.metric("Total Rows", len(df))
-            with col2:
-                st.metric("Columns", len(df.columns))
-            with col3:
-                if 'Node' in df.columns:
-                    st.metric("Unique Nodes", df['Node'].nunique())
-            with col4:
-                st.metric("Selected Nodes", len(selected_nodes))
-            
-            # Preview
-            with st.expander("👁️ Preview Data"):
-                st.dataframe(df.head(10), use_container_width=True)
-            
-            # Run analysis button
-            if st.button("🚀 Run Multi-Foundation Analysis", type="primary", use_container_width=True):
-                with st.spinner("Analyzing with multiple foundation types..."):
-                    try:
-                        # Create analyzer
-                        analyzer = PileGroupAnalyzer(
-                            pile_diameter=pile_diameter,
-                            pile_capacity=pile_capacity,
-                            pile_spacing=pile_spacing,
-                            safety_factor=safety_factor
-                        )
-                        
-                        # Process with multi-foundation support
-                        results = process_multi_foundation_analysis(
-                            df, 
-                            selected_nodes,
-                            analyzer,
-                            st.session_state.get('assignment_method', 'Automatic Optimization'),
-                            target_utilization
-                        )
-                        
-                        if results is not None and len(results) > 0:
-                            st.session_state.final_results = results
-                            st.success(f"✅ Analysis completed! Used {results['footing_type'].nunique()} different foundation types")
-                            st.balloons()
-                        else:
-                            st.error("No data found")
-                    except Exception as e:
-                        st.error(f"Error: {str(e)}")
-        else:
-            st.error(message)
-    else:
-        st.info("👈 Please upload a CSV file")
-        
-        # Show example format
-        st.subheader("Expected Format")
-        example_df = pd.DataFrame({
-            'Node': [789, 790, 791],
-            'X': [0, 10, 20],
-            'Y': [0, 0, 0],
-            'FZ (tonf)': [300, 450, 600],
-            'MX (tonf·m)': [50, 80, 100],
-            'MY (tonf·m)': [40, 60, 80]
-        })
-        st.dataframe(example_df)
-
-with tab3:
-    st.markdown('<h2 class="section-header">🔬 Analysis Results</h2>', unsafe_allow_html=True)
-    
-    if st.session_state.final_results is not None:
-        results = st.session_state.final_results
-        
-        # Summary metrics
-        col1, col2, col3, col4, col5 = st.columns(5)
-        
-        with col1:
-            st.metric("Total Nodes", len(results))
-        with col2:
-            st.metric("Foundation Types", results['footing_type'].nunique())
-        with col3:
-            st.metric("Avg Utilization", f"{results['utilization_ratio'].mean():.1%}")
-        with col4:
-            safe_count = len(results[results['is_safe']])
-            st.metric("Safe Designs", f"{safe_count}/{len(results)}")
-        with col5:
-            total_piles = results['n_piles'].sum()
-            st.metric("Total Piles", int(total_piles))
-        
-        # Foundation distribution
-        st.subheader("🏗️ Foundation Type Distribution")
-        
-        foundation_summary = results.groupby('footing_type').agg({
-            'Node': 'count',
-            'utilization_ratio': ['mean', 'max', 'min'],
-            'n_piles': 'first',
-            'assignment_method': 'first'
-        }).round(3)
-        
-        foundation_summary.columns = ['Count', 'Avg Util', 'Max Util', 'Min Util', 'Piles/Node', 'Method']
-        st.dataframe(foundation_summary, use_container_width=True)
-        
-        # Detailed results table
-        st.subheader("📋 Detailed Results")
-        
-        # Add color coding
-        def highlight_utilization(val):
-            if val > 1.0:
-                return 'background-color: #ffcccc'
-            elif val > 0.95:
-                return 'background-color: #ffe6cc'
-            elif val > 0.80:
-                return 'background-color: #ccffcc'
-            elif val > 0.60:
-                return 'background-color: #ffffcc'
-            else:
-                return 'background-color: #e6e6e6'
-        
-        display_cols = ['Node', 'footing_type', 'n_piles', 'Fz', 'Mx', 'My',
-                       'max_pile_load', 'utilization_ratio', 'category', 
-                       'assignment_method', 'is_safe']
-        
-        styled_df = results[display_cols].style.applymap(
-            highlight_utilization, 
-            subset=['utilization_ratio']
-        )
-        
-        st.dataframe(styled_df, use_container_width=True, height=400)
-        
-    else:
-        st.info("No results yet. Please run analysis.")
-
-with tab4:
-    st.markdown('<h2 class="section-header">📈 Visualizations</h2>', unsafe_allow_html=True)
-    
-    if st.session_state.final_results is not None:
-        results = st.session_state.final_results
-        
-        # Create comprehensive visualization
-        fig = create_foundation_summary_visualization(results)
-        st.plotly_chart(fig, use_container_width=True)
-        
-        # Additional visualizations
-        st.subheader("🎨 Foundation Color Map")
-        
-        if 'X' in results.columns and 'Y' in results.columns:
-            fig_map = go.Figure()
-            
-            for foundation in results['footing_type'].unique():
-                data = results[results['footing_type'] == foundation]
-                config = DEFAULT_PILE_CONFIGURATIONS.get(foundation, {})
-                
-                fig_map.add_trace(go.Scatter(
-                    x=data['X'],
-                    y=data['Y'],
-                    mode='markers+text',
-                    name=foundation,
-                    marker=dict(
-                        size=15,
-                        color=config.get('color', '#808080'),
-                        symbol='square',
-                        line=dict(color='white', width=2)
-                    ),
-                    text=data['Node'],
-                    textposition='top center',
-                    textfont=dict(size=8),
-                    hovertemplate='Node: %{text}<br>Foundation: ' + foundation + '<br>X: %{x:.1f}<br>Y: %{y:.1f}'
-                ))
-            
-            fig_map.update_layout(
-                title='Site Plan - Foundation Type Distribution',
-                xaxis_title='X Coordinate (m)',
-                yaxis_title='Y Coordinate (m)',
-                height=600,
-                hovermode='closest'
-            )
-            
-            st.plotly_chart(fig_map, use_container_width=True)
-        
-        # Utilization heatmap
-        st.subheader("🔥 Utilization Heatmap")
-        
-        pivot_data = results.pivot_table(
-            values='utilization_ratio',
-            index='footing_type',
-            columns='category',
-            aggfunc='count',
-            fill_value=0
-        )
-        
-        fig_heat = px.imshow(
-            pivot_data,
-            labels=dict(x="Category", y="Foundation Type", color="Count"),
-            color_continuous_scale='RdYlGn_r',
-            title="Foundation vs Utilization Category Distribution"
-        )
-        
-        st.plotly_chart(fig_heat, use_container_width=True)
-        
-    else:
-        st.info("No results to visualize")
-
-with tab5:
-    st.markdown('<h2 class="section-header">📋 Foundation Comparison</h2>', unsafe_allow_html=True)
-    
-    if st.session_state.final_results is not None:
-        results = st.session_state.final_results
-        
-        # Create comparison table
-        comparison_df = create_foundation_comparison_table(results)
-        
-        st.subheader("📊 Foundation Performance Comparison")
-        st.dataframe(comparison_df, use_container_width=True)
-        
-        # Cost estimation (simplified)
-        st.subheader("💰 Cost Estimation (Simplified)")
-        
-        pile_unit_cost = st.number_input("Cost per pile (currency units)", 1000, 10000, 5000, 100)
-        
-        cost_data = []
-        for _, row in comparison_df.iterrows():
-            cost_data.append({
-                'Foundation': row['Foundation'],
-                'Total Piles': row['Total Piles'],
-                'Estimated Cost': row['Total Piles'] * pile_unit_cost,
-                'Cost per Node': row['Total Piles'] * pile_unit_cost / row['Nodes Using'] if row['Nodes Using'] > 0 else 0
-            })
-        
-        cost_df = pd.DataFrame(cost_data)
-        cost_df['Estimated Cost'] = cost_df['Estimated Cost'].apply(lambda x: f"{x:,.0f}")
-        cost_df['Cost per Node'] = cost_df['Cost per Node'].apply(lambda x: f"{x:,.0f}")
-        
-        st.dataframe(cost_df, use_container_width=True)
-        
-        # Total project cost
-        total_cost = sum([row['Total Piles'] * pile_unit_cost for _, row in comparison_df.iterrows()])
-        st.success(f"💵 Total Estimated Project Cost: {total_cost:,.0f} currency units")
-        
-    else:
-        st.info("No results for comparison")
-
-with tab6:
-    st.markdown('<h2 class="section-header">🧮 Detailed Calculations</h2>', unsafe_allow_html=True)
-    
-    if st.session_state.final_results is not None:
-        results = st.session_state.final_results
-        
-        # Node selector
-        selected_node = st.selectbox(
-            "Select node for detailed view:",
-            results['Node'].unique()
-        )
-        
-        node_data = results[results['Node'] == selected_node].iloc[0]
-        
-        # Display detailed calculation
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            st.markdown("### 📥 Loads")
-            st.write(f"**Fz:** {node_data['Fz']:.2f} tonf")
-            st.write(f"**Mx:** {node_data['Mx']:.2f} tonf·m")
-            st.write(f"**My:** {node_data['My']:.2f} tonf·m")
-            
-            st.markdown("### 🏗️ Foundation")
-            st.write(f"**Type:** {node_data['footing_type']}")
-            st.write(f"**Name:** {node_data['footing_name']}")
-            st.write(f"**Piles:** {node_data['n_piles']}")
-            st.write(f"**Method:** {node_data['assignment_method']}")
-        
-        with col2:
-            st.markdown("### 📐 Properties")
-            st.write(f"**Ixx:** {node_data['Ixx']:.3f} m²")
-            st.write(f"**Iyy:** {node_data['Iyy']:.3f} m²")
-            st.write(f"**Zx:** {node_data['Zx']:.3f} m³")
-            st.write(f"**Zy:** {node_data['Zy']:.3f} m³")
-        
-        with col3:
-            st.markdown("### 📊 Results")
-            st.write(f"**P_axial:** {node_data['axial_stress']:.2f} tonf")
-            st.write(f"**P_Mx:** {node_data['moment_stress_mx']:.2f} tonf")
-            st.write(f"**P_My:** {node_data['moment_stress_my']:.2f} tonf")
-            st.write(f"**P_max:** {node_data['max_pile_load']:.2f} tonf")
-            st.write(f"**Utilization:** {node_data['utilization_ratio']:.1%}")
-            
-            if node_data['is_safe']:
-                st.success("✅ SAFE")
-            else:
-                st.error("❌ UNSAFE")
-    else:
-        st.info("No results available")
-
-with tab7:
-    st.markdown('<h2 class="section-header">💾 Export Results</h2>', unsafe_allow_html=True)
-    
-    if st.session_state.final_results is not None:
-        results = st.session_state.final_results
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            # Export results
-            csv = results.to_csv(index=False)
-            st.download_button(
-                "📥 Download Results (CSV)",
-                data=csv,
-                file_name=f"multi_foundation_analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                mime="text/csv",
-                use_container_width=True
-            )
-            
-            # Export foundation mapping
-            if st.session_state.node_foundation_mapping:
-                mapping_df = pd.DataFrame([
-                    {'Node': k, 'Foundation': v}
-                    for k, v in st.session_state.node_foundation_mapping.items()
-                ])
-                mapping_csv = mapping_df.to_csv(index=False)
-                st.download_button(
-                    "📥 Download Foundation Mapping",
-                    data=mapping_csv,
-                    file_name=f"foundation_mapping_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                    mime="text/csv",
-                    use_container_width=True
-                )
-        
-        with col2:
-            # Export summary report
-            report = f"""# Multi-Foundation Analysis Report
-Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-
-## Configuration
-- Pile Diameter: {pile_diameter} m
-- Pile Capacity: {pile_capacity} tonf
-- Pile Spacing: {pile_spacing} m
-- Safety Factor: {safety_factor}
-- Target Utilization: {target_utilization:.0%}
-
-## Results Summary
-- Total Nodes: {len(results)}
-- Foundation Types Used: {results['footing_type'].nunique()}
-- Average Utilization: {results['utilization_ratio'].mean():.1%}
-- Safe Designs: {len(results[results['is_safe']])} / {len(results)}
-- Total Piles: {results['n_piles'].sum()}
+- Total Piles Required: {results['n_piles'].sum()}
 
 ## Foundation Distribution
-{results['footing_type'].value_counts().to_string()}
-
-## Assignment Method
-{results['assignment_method'].value_counts().to_string()}
+{results['foundation_id'].value_counts().to_string()}
 """
-            
-            st.download_button(
-                "📄 Download Report (MD)",
-                data=report,
-                file_name=f"multi_foundation_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md",
-                mime="text/markdown",
-                use_container_width=True
-            )
         
-        st.success("✅ All export options ready!")
+        st.download_button(
+            "📄 Download Report (MD)",
+            data=report,
+            file_name=f"analysis_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md",
+            mime="text/markdown",
+            use_container_width=True
+        )
+        
+        st.success("✅ Export options ready!")
     else:
         st.info("No results to export")
