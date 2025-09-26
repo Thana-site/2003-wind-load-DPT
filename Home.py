@@ -1075,18 +1075,25 @@ with tab5:
                        'Fz', 'max_pile_load', 'utilization_ratio', 
                        'category', 'is_safe', 'Tension_Flag']
         
+        # Create a safe subset for styling (include all needed columns for styling function)
+        styling_df = display_results[display_cols + ['Has_Tension', 'is_safe', 'category']].copy()
+        
         # Style the dataframe to highlight tension nodes
         def highlight_tension(row):
-            if row['Has_Tension']:
-                return ['background-color: #ffe6e6'] * len(row)
-            elif not row['is_safe']:
-                return ['background-color: #ffcccc'] * len(row)
-            elif row['category'] == 'Optimal':
-                return ['background-color: #ccffcc'] * len(row)
-            else:
-                return [''] * len(row)
+            colors = [''] * len(display_cols)  # Only color the display columns
+            try:
+                if row.get('Has_Tension', False):
+                    colors = ['background-color: #ffe6e6'] * len(display_cols)
+                elif not row.get('is_safe', True):
+                    colors = ['background-color: #ffcccc'] * len(display_cols)
+                elif row.get('category', '') == 'Optimal':
+                    colors = ['background-color: #ccffcc'] * len(display_cols)
+            except:
+                pass  # If any error, just return default empty colors
+            return colors
         
-        styled_df = display_results[display_cols].style.apply(highlight_tension, axis=1)
+        # Apply styling only to the display columns
+        styled_df = styling_df[display_cols].style.apply(highlight_tension, axis=1)
         st.dataframe(styled_df, use_container_width=True)
         
         # Legend
