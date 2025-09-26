@@ -1075,26 +1075,25 @@ with tab5:
                        'Fz', 'max_pile_load', 'utilization_ratio', 
                        'category', 'is_safe', 'Tension_Flag']
         
-        # Create a safe subset for styling (include all needed columns for styling function)
-        styling_df = display_results[display_cols + ['Has_Tension', 'is_safe', 'category']].copy()
+        # Create display dataframe without complex styling that's causing issues
+        display_df = display_results[display_cols].copy()
         
-        # Style the dataframe to highlight tension nodes
-        def highlight_tension(row):
-            colors = [''] * len(display_cols)  # Only color the display columns
-            try:
-                if row.get('Has_Tension', False):
-                    colors = ['background-color: #ffe6e6'] * len(display_cols)
-                elif not row.get('is_safe', True):
-                    colors = ['background-color: #ffcccc'] * len(display_cols)
-                elif row.get('category', '') == 'Optimal':
-                    colors = ['background-color: #ccffcc'] * len(display_cols)
-            except:
-                pass  # If any error, just return default empty colors
-            return colors
+        # Add row-level background color indicator
+        def get_status_indicator(row):
+            if row['Has_Tension']:
+                return '🔴 TENSION'
+            elif not row['is_safe']:
+                return '🟠 OVER-CAP'
+            elif row['category'] == 'Optimal':
+                return '🟢 OPTIMAL'
+            else:
+                return '🔵 SAFE'
         
-        # Apply styling only to the display columns
-        styled_df = styling_df[display_cols].style.apply(highlight_tension, axis=1)
-        st.dataframe(styled_df, use_container_width=True)
+        display_df['Status'] = display_results.apply(get_status_indicator, axis=1)
+        
+        # Reorder columns to show status first
+        final_display_cols = ['Status'] + display_cols
+        st.dataframe(display_df[final_display_cols], use_container_width=True)
         
         # Legend
         st.markdown("""
