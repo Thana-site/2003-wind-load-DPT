@@ -418,8 +418,10 @@ def process_analysis(df, selected_nodes, analyzer, target_utilization=0.85):
         Mx = abs(row.get('MX (tonf·m)', row.get('Mx', 0)))
         My = abs(row.get('MY (tonf·m)', row.get('My', 0)))
         
-        # Get load combination
-        load_case_raw = row.get('Load Combination', row.get('Load Case', f'LC_{idx}'))
+        # Get load combination - handle different possible column names
+        load_case_raw = row.get('Load Combination', 
+                               row.get('Load Case', 
+                                      row.get('LoadCase', f'LC_{idx}')))
         load_combination = format_load_combination(load_case_raw)
         
         # Check for manual assignment
@@ -445,7 +447,7 @@ def process_analysis(df, selected_nodes, analyzer, target_utilization=0.85):
             result['Mx'] = Mx
             result['My'] = My
             result['Load_Case'] = load_case_raw
-            result['Load_Combination'] = load_combination
+            result['Load_Combination'] = load_combination  # This creates the column properly
             result['Has_Tension'] = Fz_raw < 0
             
             results.append(result)
@@ -956,7 +958,9 @@ with tab4:
                     st.write(f"• P (Fz) = {example_node['Fz']:.2f} tonf")
                     st.write(f"• Mx = {example_node['Mx']:.2f} tonf·m")
                     st.write(f"• My = {example_node['My']:.2f} tonf·m")
-                    st.write(f"• Load Combination: **{example_node['Load_Combination']}**")
+                    # Use safe column access for Load_Combination
+                    load_comb = example_node.get('Load_Combination', example_node.get('Load_Case', 'Unknown'))
+                    st.write(f"• Load Combination: **{load_comb}**")
                 
                 with col2:
                     st.markdown("**Stress Components:**")
@@ -1054,9 +1058,17 @@ with tab5:
         # Results table with critical load combination
         st.subheader("Analysis Results - Critical Load Combinations")
         
-        # Prepare display dataframe
+        # Prepare display dataframe with safe column access
         display_results = results.copy()
-        display_results['Display_Load'] = display_results['Load_Combination']
+        
+        # Handle the Load_Combination column safely
+        if 'Load_Combination' in display_results.columns:
+            display_results['Display_Load'] = display_results['Load_Combination']
+        elif 'Load_Case' in display_results.columns:
+            display_results['Display_Load'] = display_results['Load_Case']
+        else:
+            display_results['Display_Load'] = 'Unknown'
+            
         display_results['Tension_Flag'] = display_results['Has_Tension'].apply(lambda x: '⚠️ TENSION' if x else '✓')
         
         display_cols = ['Node', 'foundation_id', 'n_piles', 'Display_Load', 
@@ -1104,7 +1116,14 @@ with tab6:
         with col1:
             # Export CSV with all details
             export_df = results.copy()
-            export_df['Critical_Load_Combination'] = export_df['Load_Combination']
+            # Safely handle Load_Combination column for export
+            if 'Load_Combination' in export_df.columns:
+                export_df['Critical_Load_Combination'] = export_df['Load_Combination']
+            elif 'Load_Case' in export_df.columns:
+                export_df['Critical_Load_Combination'] = export_df['Load_Case']
+            else:
+                export_df['Critical_Load_Combination'] = 'Unknown'
+                
             csv = export_df.to_csv(index=False)
             st.download_button(
                 "📥 Download Complete Results (CSV)",
@@ -1148,10 +1167,17 @@ Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 {results['foundation_id'].value_counts().to_string()}
 
 ## Critical Load Combinations Used
-{results[['Node', 'Load_Combination', 'utilization_ratio']].to_string()}
-
-## Warnings
 """
+        
+        # Safely handle Load_Combination column in report
+        if 'Load_Combination' in results.columns:
+            report += results[['Node', 'Load_Combination', 'utilization_ratio']].to_string()
+        elif 'Load_Case' in results.columns:
+            report += results[['Node', 'Load_Case', 'utilization_ratio']].to_string()
+        else:
+            report += results[['Node', 'utilization_ratio']].to_string()
+
+        report += "\n\n## Warnings\n"
         
         if tension_count > 0:
             report += f"\n### ⚠️ TENSION WARNING\n"
