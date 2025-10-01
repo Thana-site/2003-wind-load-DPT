@@ -1134,7 +1134,7 @@ with tab5:
         
         display_results['Tension_Flag'] = display_results['Has_Tension'].apply(lambda x: '⚠️ TENSION' if x else '✓')
         
-        display_cols = ['Node', 'foundation_id', 'n_piles', 'Display_Load', 
+        display_cols = ['Node', 'foundation_id', 'n_piles', 'Display_Load', "Load Combination"
                        'Fz', 'max_pile_load', 'utilization_ratio', 
                        'category', 'is_safe', 'Tension_Flag']
         
