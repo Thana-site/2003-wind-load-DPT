@@ -244,10 +244,9 @@ LOAD_COMBINATIONS = {
 class PileAnalyzer:
     """Pile foundation analysis using proper structural engineering theory"""
     
-    def __init__(self, pile_diameter=0.6, pile_capacity=120, pile_spacing=1.5):
+    def __init__(self, pile_diameter=0.6, pile_capacity=120):
         self.pile_diameter = pile_diameter
         self.pile_capacity = pile_capacity
-        self.pile_spacing = pile_spacing
         self.min_spacing = 2.5 * pile_diameter
     
     def get_foundation_config(self, foundation_id):
@@ -310,7 +309,6 @@ class PileAnalyzer:
             'Zx': Zx,
             'Zy': Zy,
             'coords': coords.tolist(),
-            'pile_spacing': self.pile_spacing,
             'centroid': (centroid_x, centroid_y)
         }
         
@@ -539,7 +537,6 @@ def create_foundation_properties_display(foundation_id):
         # Create properties table
         properties_df = pd.DataFrame([
             {'Property': 'Number of Piles (n)', 'Value': f"{props['n_piles']}", 'Unit': 'piles'},
-            {'Property': 'Pile Spacing', 'Value': f"{props['pile_spacing']:.2f}", 'Unit': 'm'},
             {'Property': 'Moment of Inertia Ixx', 'Value': f"{props['Ixx']:.3f}", 'Unit': 'm²'},
             {'Property': 'Moment of Inertia Iyy', 'Value': f"{props['Iyy']:.3f}", 'Unit': 'm²'},
             {'Property': 'Distance cx (max)', 'Value': f"{props['cx_max']:.3f}", 'Unit': 'm'},
@@ -607,7 +604,6 @@ def create_custom_foundation_ui():
             
             if template == "Square":
                 n = st.slider("Grid Size", 2, 5, 3, key="square_n")
-                spacing = st.slider("Spacing", 1.0, 3.0, 1.5, 0.1, key="square_spacing")
                 coordinates = []
                 for i in range(n):
                     for j in range(n):
@@ -618,8 +614,7 @@ def create_custom_foundation_ui():
             elif template == "Circle":
                 n = st.slider("Number of Piles", 3, 20, 8, key="circle_n")
                 radius = st.slider("Radius", 1.0, 5.0, 2.0, 0.1, key="circle_radius")
-                center = st.checkbox("Include Center", key="circle_center")
-                
+                center = st.checkbox("Include Center", key="circle_center")             
                 coordinates = []
                 if center:
                     coordinates.append((0, 0))
@@ -632,7 +627,6 @@ def create_custom_foundation_ui():
             elif template == "Rectangle":
                 rows = st.slider("Rows", 2, 6, 3, key="rect_rows")
                 cols = st.slider("Columns", 2, 6, 3, key="rect_cols")
-                spacing = st.slider("Spacing", 1.0, 3.0, 1.5, 0.1, key="rect_spacing")
                 
                 coordinates = []
                 for i in range(rows):
@@ -797,7 +791,6 @@ uploaded_file = st.sidebar.file_uploader("Upload CSV File", type=['csv'])
 st.sidebar.subheader("🔧 Pile Parameters")
 pile_diameter = st.sidebar.number_input("Pile Diameter (m)", 0.3, 2.0, 0.6, 0.1)
 pile_capacity = st.sidebar.number_input("Pile Capacity (tonf)", 30, 500, 120, 10)
-pile_spacing = st.sidebar.number_input("Pile Spacing (m)", 0.0000000000001, 1.0, 5.0, 1.5, 0.1)
 target_utilization = st.sidebar.slider("Target Utilization", 0.7, 0.95, 0.85, 0.05)
 
 # Node selection
@@ -969,7 +962,7 @@ with tab3:
             # Run analysis
             if st.button("🚀 Run Analysis", type="primary", use_container_width=True):
                 with st.spinner("Analyzing..."):
-                    analyzer = PileAnalyzer(pile_diameter, pile_capacity, pile_spacing)
+                    analyzer = PileAnalyzer(pile_diameter, pile_capacity)
                     results = process_analysis(df, selected_nodes, analyzer, target_utilization)
                     
                     if results is not None and len(results) > 0:
@@ -1232,7 +1225,6 @@ Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 ## Configuration
 - Pile Diameter: {pile_diameter} m
 - Pile Capacity: {pile_capacity} tonf
-- Pile Spacing: {pile_spacing} m
 - Target Utilization: {target_utilization:.0%}
 
 ## Results Summary
