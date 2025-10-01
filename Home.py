@@ -1142,7 +1142,8 @@ with tab5:
         
         # Updated columns to include Mx and My
         display_cols = ['Node', 'foundation_id', 'n_piles', 'Display_Load',
-                       'Fz', 'Mx', 'My', 'max_pile_load', 'utilization_ratio', 
+                       'Fz', 'Mx', 'My', 'Mx_abs', 'My_abs', 
+                       'max_pile_load', 'utilization_ratio', 
                        'category', 'is_safe', 'Tension_Flag']
         
         # Format the dataframe for better readability
@@ -1156,6 +1157,7 @@ with tab5:
         # Rename columns for display
         display_results_formatted.columns = ['Node', 'Foundation', 'Piles', 'Load Combination',
                                              'Fz (tonf)', 'Mx (tonf·m)', 'My (tonf·m)', 
+                                             'Mx Used (tonf·m)', 'My Used (tonf·m)',
                                              'Max Pile Load (tonf)', 'Utilization', 
                                              'Category', 'Safe', 'Status']
         
