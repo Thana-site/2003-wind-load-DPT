@@ -1134,17 +1134,31 @@ with tab5:
         
         display_results['Tension_Flag'] = display_results['Has_Tension'].apply(lambda x: '⚠️ TENSION' if x else '✓')
         
+        # Updated columns to include Mx and My
         display_cols = ['Node', 'foundation_id', 'n_piles', 'Display_Load',
-                       'Fz', 'max_pile_load', 'utilization_ratio', 
+                       'Fz', 'Mx', 'My', 'max_pile_load', 'utilization_ratio', 
                        'category', 'is_safe', 'Tension_Flag']
+        
+        # Format the dataframe for better readability
+        display_results_formatted = display_results[display_cols].copy()
+        display_results_formatted['Fz'] = display_results_formatted['Fz'].apply(lambda x: f"{x:.2f}")
+        display_results_formatted['Mx'] = display_results_formatted['Mx'].apply(lambda x: f"{x:.2f}")
+        display_results_formatted['My'] = display_results_formatted['My'].apply(lambda x: f"{x:.2f}")
+        display_results_formatted['max_pile_load'] = display_results_formatted['max_pile_load'].apply(lambda x: f"{x:.2f}")
+        display_results_formatted['utilization_ratio'] = display_results_formatted['utilization_ratio'].apply(lambda x: f"{x:.1%}")
+        
+        # Rename columns for display
+        display_results_formatted.columns = ['Node', 'Foundation', 'Piles', 'Load Combination',
+                                             'Fz (tonf)', 'Mx (tonf·m)', 'My (tonf·m)', 
+                                             'Max Pile Load (tonf)', 'Utilization', 
+                                             'Category', 'Safe', 'Status']
         
         # Style the dataframe to highlight tension nodes
         def highlight_tension(row):
-            # Get the index to look up values in the full dataframe
             idx = row.name
             has_tension = display_results.loc[idx, 'Has_Tension']
-            is_safe = row['is_safe']
-            category = row['category']
+            is_safe = display_results.loc[idx, 'is_safe']
+            category = display_results.loc[idx, 'category']
             
             if has_tension:
                 return ['background-color: #ffe6e6'] * len(row)
@@ -1155,8 +1169,8 @@ with tab5:
             else:
                 return [''] * len(row)
         
-        styled_df = display_results[display_cols].style.apply(highlight_tension, axis=1)
-        st.dataframe(styled_df, width='stretch')
+        styled_df = display_results_formatted.style.apply(highlight_tension, axis=1)
+        st.dataframe(styled_df, use_container_width=True)
         
         # Legend
         st.markdown("""
