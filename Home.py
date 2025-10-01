@@ -1088,17 +1088,23 @@ with tab5:
         
         # Style the dataframe to highlight tension nodes
         def highlight_tension(row):
-            if row['Has_Tension']:
+            # Get the index to look up values in the full dataframe
+            idx = row.name
+            has_tension = display_results.loc[idx, 'Has_Tension']
+            is_safe = row['is_safe']
+            category = row['category']
+            
+            if has_tension:
                 return ['background-color: #ffe6e6'] * len(row)
-            elif not row['is_safe']:
+            elif not is_safe:
                 return ['background-color: #ffcccc'] * len(row)
-            elif row['category'] == 'Optimal':
+            elif category == 'Optimal':
                 return ['background-color: #ccffcc'] * len(row)
             else:
                 return [''] * len(row)
         
         styled_df = display_results[display_cols].style.apply(highlight_tension, axis=1)
-        st.dataframe(styled_df, use_container_width=True)
+        st.dataframe(styled_df, width='stretch')
         
         # Legend
         st.markdown("""
