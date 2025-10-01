@@ -441,6 +441,13 @@ def extract_load_combinations_from_csv(df):
         return load_combo_dict, case_col, combo_col, True
     
     return {}, None, None, False
+
+def sort_load_cases(load_case):
+    """Extract number from load case for sorting (e.g., cLCB70 -> 70)"""
+    match = re.search(r'(\d+)', load_case)
+    if match:
+        return int(match.group(1))
+    return 0
     
 def format_load_combination(load_case):
     """Convert load case code to readable combination"""
@@ -991,22 +998,35 @@ with tab3:
                 
                 # Show detected combinations in expandable section
                 with st.expander(f"View Detected Load Combinations ({len(detected_combos)} total)", expanded=False):
-                    # Create display dataframe
+                    # Create display dataframe with sorted load cases
+                    sorted_cases = sorted(detected_combos.items(), key=lambda x: sort_load_cases(x[0]))
+                    
                     combo_display = pd.DataFrame([
                         {'Load Case': case, 'Load Combination': combo}
-                        for case, combo in sorted(detected_combos.items())
+                        for case, combo in sorted_cases
                     ])
-                    st.dataframe(combo_display, use_container_width=True, height=300)
+                    
+                    st.dataframe(combo_display, use_container_width=True, height=400)
+                    
+                    # Show statistics
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        lrfd_count = sum(1 for case in detected_combos.keys() if not 'SERV' in detected_combos[case])
+                        st.metric("LRFD Combinations", lrfd_count)
+                    with col2:
+                        serv_count = sum(1 for case in detected_combos.keys() if 'SERV' in detected_combos[case])
+                        st.metric("Serviceability Combinations", serv_count)
+                    with col3:
+                        st.metric("Total Combinations", len(detected_combos))
                     
                     # Option to export detected combinations
-                    combo_json = json.dumps(detected_combos, indent=2)
+                    combo_json = json.dumps(detected_combos, indent=2, sort_keys=True)
                     st.download_button(
                         "📥 Export Load Combinations (JSON)",
                         data=combo_json,
                         file_name=f"load_combinations_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
                         mime="application/json"
                     )
-                
                 # Update global LOAD_COMBINATIONS dictionary with detected values
                 if st.button("✅ Use Detected Load Combinations", type="primary"):
                     # Merge with existing combinations (detected takes priority)
