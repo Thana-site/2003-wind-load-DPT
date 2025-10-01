@@ -734,7 +734,7 @@ uploaded_file = st.sidebar.file_uploader("Upload CSV File", type=['csv'])
 st.sidebar.subheader("🔧 Pile Parameters")
 pile_diameter = st.sidebar.number_input("Pile Diameter (m)", 0.3, 2.0, 0.6, 0.1)
 pile_capacity = st.sidebar.number_input("Pile Capacity (tonf)", 30, 500, 120, 10)
-pile_spacing = st.sidebar.number_input("Pile Spacing (m)", 1.0, 5.0, 1.5, 0.1)
+pile_spacing = st.sidebar.number_input("Pile Spacing (m)", 0, 1.0, 5.0, 1.5, 0.1)
 target_utilization = st.sidebar.slider("Target Utilization", 0.7, 0.95, 0.85, 0.05)
 
 # Node selection
