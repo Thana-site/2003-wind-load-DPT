@@ -483,11 +483,15 @@ def process_analysis(df, selected_nodes, analyzer, target_utilization=0.85):
     results = []
     
     for idx, row in df_filtered.iterrows():
-        # Extract loads - handle both positive and negative Fz
+        # Extract loads - preserve original values
         Fz_raw = row.get('FZ (tonf)', row.get('Fz', 0))
-        Fz = abs(Fz_raw)  # Use absolute value for calculation
-        Mx = abs(row.get('MX (tonf·m)', row.get('Mx', 0)))
-        My = abs(row.get('MY (tonf·m)', row.get('My', 0)))
+        Mx_raw = row.get('MX (tonf·m)', row.get('Mx', 0))  # Original signed value
+        My_raw = row.get('MY (tonf·m)', row.get('My', 0))  # Original signed value
+        
+        # Use absolute values for calculation
+        Fz = abs(Fz_raw)
+        Mx = abs(Mx_raw)
+        My = abs(My_raw)
         
         # Get load combination
         load_case_raw = row.get('Load Combination', row.get('Load Case', f'LC_{idx}'))
@@ -513,8 +517,10 @@ def process_analysis(df, selected_nodes, analyzer, target_utilization=0.85):
             result['Z'] = row.get('Z', 0)
             result['Fz'] = Fz
             result['Fz_raw'] = Fz_raw  # Store raw value for tension check
-            result['Mx'] = Mx
-            result['My'] = My
+            result['Mx'] = Mx_raw      # Store ORIGINAL signed value for display
+            result['My'] = My_raw      # Store ORIGINAL signed value for display
+            result['Mx_abs'] = Mx      # Store absolute value used in calculation
+            result['My_abs'] = My      # Store absolute value used in calculation
             result['Load_Case'] = load_case_raw
             result['Load_Combination'] = load_combination
             result['Has_Tension'] = Fz_raw < 0
