@@ -811,12 +811,13 @@ else:
 st.sidebar.info(f"Selected {len(selected_nodes)} nodes")
 
 # ===================== MAIN CONTENT - TABS =====================
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
     "📚 Theory & Setup",
     "🛠️ Custom Foundations",
     "📊 Data & Analysis",
     "🔍 Foundation Properties",
     "📈 Results & Visualization",
+    "🗺️ Site Plan & Foundation Map",  # NEW TAB
     "💾 Export"
 ])
 
@@ -1197,6 +1198,237 @@ with tab5:
         st.info("No results to display. Please run analysis first.")
 
 with tab6:
+    st.markdown('<h2 class="section-header">🗺️ Site Plan & Foundation Map</h2>', unsafe_allow_html=True)
+    
+    if st.session_state.final_results is not None:
+        results = st.session_state.final_results
+        
+        # Check if coordinate data exists
+        if 'X' not in results.columns or 'Y' not in results.columns:
+            st.warning("⚠️ Coordinate data (X, Y) not found in results. Cannot generate site plan.")
+        else:
+            # Filter options
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                show_labels = st.checkbox("Show Node Labels", value=True)
+            with col2:
+                show_foundation_icons = st.checkbox("Show Foundation Type Icons", value=True)
+            with col3:
+                marker_size = st.slider("Marker Size", 10, 50, 25)
+            
+            # Create main site plan
+            fig = go.Figure()
+            
+            # Group by foundation type for better visualization
+            for foundation_id in results['foundation_id'].unique():
+                foundation_data = results[results['foundation_id'] == foundation_id]
+                
+                # Get foundation configuration
+                all_foundations = {**DEFAULT_FOUNDATIONS, **st.session_state.custom_foundations}
+                config = all_foundations.get(foundation_id, {})
+                
+                # Plot nodes with this foundation type
+                fig.add_trace(go.Scatter(
+                    x=foundation_data['X'],
+                    y=foundation_data['Y'],
+                    mode='markers+text' if show_labels else 'markers',
+                    name=f"{foundation_id} ({config.get('name', 'Unknown')})",
+                    marker=dict(
+                        size=marker_size,
+                        color=config.get('color', '#808080'),
+                        line=dict(color='white', width=2),
+                        symbol='circle'
+                    ),
+                    text=foundation_data['Node'].astype(str),
+                    textposition='top center',
+                    textfont=dict(size=10, color='black'),
+                    hovertemplate='<b>Node %{text}</b><br>' +
+                                  'Foundation: ' + foundation_id + '<br>' +
+                                  'Piles: %{customdata[0]}<br>' +
+                                  'X: %{x:.2f} m<br>' +
+                                  'Y: %{y:.2f} m<br>' +
+                                  'Utilization: %{customdata[1]:.1%}<br>' +
+                                  '<extra></extra>',
+                    customdata=foundation_data[['n_piles', 'utilization_ratio']].values
+                ))
+            
+            # Update layout
+            fig.update_layout(
+                title='Foundation Distribution Site Plan',
+                xaxis_title='X Coordinate (m)',
+                yaxis_title='Y Coordinate (m)',
+                height=700,
+                hovermode='closest',
+                showlegend=True,
+                legend=dict(
+                    orientation="v",
+                    yanchor="top",
+                    y=1,
+                    xanchor="left",
+                    x=1.02
+                ),
+                xaxis=dict(showgrid=True, gridcolor='lightgray'),
+                yaxis=dict(showgrid=True, gridcolor='lightgray', scaleanchor="x", scaleratio=1)
+            )
+            
+            st.plotly_chart(fig, use_container_width=True)
+            
+            # Summary statistics by location
+            st.markdown("### Foundation Distribution Summary")
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                # Foundation type counts
+                foundation_summary = results.groupby('foundation_id').agg({
+                    'Node': 'count',
+                    'n_piles': 'first',
+                    'utilization_ratio': 'mean',
+                    'foundation_name': 'first'
+                }).reset_index()
+                
+                foundation_summary.columns = ['Foundation ID', 'Count', 'Piles/Foundation', 
+                                             'Avg Utilization', 'Name']
+                foundation_summary['Total Piles'] = foundation_summary['Count'] * foundation_summary['Piles/Foundation']
+                foundation_summary['Avg Utilization'] = foundation_summary['Avg Utilization'].apply(lambda x: f"{x:.1%}")
+                
+                st.markdown("#### Foundation Type Distribution")
+                st.dataframe(foundation_summary, use_container_width=True, hide_index=True)
+            
+            with col2:
+                # Create pie chart of foundation distribution
+                fig_pie = go.Figure(data=[go.Pie(
+                    labels=foundation_summary['Foundation ID'],
+                    values=foundation_summary['Count'],
+                    hole=0.3,
+                    marker=dict(colors=[
+                        results[results['foundation_id'] == fid]['color'].iloc[0] 
+                        for fid in foundation_summary['Foundation ID']
+                    ])
+                )])
+                
+                fig_pie.update_layout(
+                    title='Foundation Type Distribution',
+                    height=400
+                )
+                
+                st.plotly_chart(fig_pie, use_container_width=True)
+            
+            # Detailed foundation layout viewer
+            st.markdown("### Detailed Foundation Layout Viewer")
+            
+            selected_node = st.selectbox(
+                "Select Node to View Foundation Details",
+                options=results['Node'].unique(),
+                format_func=lambda x: f"Node {x}"
+            )
+            
+            if selected_node:
+                node_data = results[results['Node'] == selected_node].iloc[0]
+                foundation_id = node_data['foundation_id']
+                
+                col1, col2 = st.columns([1, 2])
+                
+                with col1:
+                    st.markdown(f"#### Node {selected_node} Details")
+                    st.markdown(f"""
+                    - **Foundation Type:** {foundation_id}
+                    - **Foundation Name:** {node_data['foundation_name']}
+                    - **Number of Piles:** {int(node_data['n_piles'])}
+                    - **Location:** ({node_data['X']:.2f}, {node_data['Y']:.2f})
+                    - **Utilization:** {node_data['utilization_ratio']:.1%}
+                    - **Load Combination:** {node_data.get('Display_Load', node_data.get('Load_Combination', 'N/A'))}
+                    - **Max Pile Load:** {node_data['max_pile_load']:.2f} tonf
+                    - **Category:** {node_data['category']}
+                    - **Status:** {'✅ Safe' if node_data['is_safe'] else '❌ Over-capacity'}
+                    """)
+                    
+                    if node_data.get('Has_Tension', False):
+                        st.markdown("""
+                        <div class="tension-warning">
+                        ⚠️ This node has tension forces
+                        </div>
+                        """, unsafe_allow_html=True)
+                
+                with col2:
+                    # Show foundation layout
+                    if foundation_id in st.session_state.foundation_properties:
+                        props = st.session_state.foundation_properties[foundation_id]
+                        coords = np.array(props['coords'])
+                        
+                        fig_layout = go.Figure()
+                        
+                        # Add piles
+                        fig_layout.add_trace(go.Scatter(
+                            x=coords[:, 0],
+                            y=coords[:, 1],
+                            mode='markers+text',
+                            marker=dict(
+                                size=40,
+                                color=node_data['color'],
+                                symbol='circle',
+                                line=dict(color='darkblue', width=2)
+                            ),
+                            text=[f'P{i+1}' for i in range(len(coords))],
+                            textposition='middle center',
+                            textfont=dict(size=12, color='white', family='Arial Black'),
+                            name='Piles'
+                        ))
+                        
+                        # Add centroid
+                        fig_layout.add_trace(go.Scatter(
+                            x=[props['centroid'][0]],
+                            y=[props['centroid'][1]],
+                            mode='markers',
+                            marker=dict(size=20, color='red', symbol='x'),
+                            name='Centroid'
+                        ))
+                        
+                        # Add bounding box
+                        fig_layout.add_shape(
+                            type="rect",
+                            x0=min(coords[:, 0]) - 0.3,
+                            y0=min(coords[:, 1]) - 0.3,
+                            x1=max(coords[:, 0]) + 0.3,
+                            y1=max(coords[:, 1]) + 0.3,
+                            line=dict(color="gray", dash="dash", width=2)
+                        )
+                        
+                        fig_layout.update_layout(
+                            title=f"{foundation_id} Layout - {node_data['foundation_name']}",
+                            xaxis_title='X (m)',
+                            yaxis_title='Y (m)',
+                            height=500,
+                            showlegend=True,
+                            xaxis=dict(scaleanchor="y", showgrid=True, zeroline=True),
+                            yaxis=dict(scaleanchor="x", showgrid=True, zeroline=True)
+                        )
+                        
+                        st.plotly_chart(fig_layout, use_container_width=True)
+            
+            # Export site plan data
+            st.markdown("### Export Site Plan Data")
+            
+            site_plan_export = results[['Node', 'X', 'Y', 'foundation_id', 'foundation_name', 
+                                       'n_piles', 'utilization_ratio', 'category']].copy()
+            site_plan_export.columns = ['Node', 'X (m)', 'Y (m)', 'Foundation ID', 
+                                       'Foundation Name', 'Piles', 'Utilization', 'Category']
+            
+            csv_site_plan = site_plan_export.to_csv(index=False)
+            st.download_button(
+                "📥 Download Site Plan Data (CSV)",
+                data=csv_site_plan,
+                file_name=f"site_plan_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                mime="text/csv",
+                use_container_width=True
+            )
+            
+    else:
+        st.info("Run analysis first to view site plan and foundation locations")
+
+
+with tab7:
     st.markdown('<h2 class="section-header">💾 Export Results</h2>', unsafe_allow_html=True)
     
     if st.session_state.final_results is not None:
