@@ -235,6 +235,7 @@ LOAD_COMBINATIONS = {
 }
 
 # ===================== ANALYZER CLASS =====================
+
 class PileAnalyzer:
     """Pile foundation analysis using proper structural engineering theory"""
     
@@ -409,8 +410,47 @@ class PileAnalyzer:
         return min(results, key=lambda x: x['utilization_ratio'])
 
 # ===================== HELPER FUNCTIONS =====================
+def extract_load_combinations_from_csv(df):
+    """Automatically extract load combinations from CSV and build dictionary"""
+    load_combo_dict = {}
+    
+    # Look for Load Case and Load Combination columns
+    case_col = None
+    combo_col = None
+    
+    # Try to find the columns (case-insensitive)
+    for col in df.columns:
+        col_lower = col.lower().strip()
+        if 'load case' in col_lower and case_col is None:
+            case_col = col
+        elif 'load combination' in col_lower and combo_col is None:
+            combo_col = col
+    
+    if case_col and combo_col:
+        # Extract unique combinations
+        unique_combos = df[[case_col, combo_col]].drop_duplicates()
+        
+        for _, row in unique_combos.iterrows():
+            case = str(row[case_col]).strip()
+            combination = str(row[combo_col]).strip()
+            
+            # Skip NaN or empty values
+            if case and combination and case != 'nan' and combination != 'nan':
+                load_combo_dict[case] = combination
+        
+        return load_combo_dict, case_col, combo_col, True
+    
+    return {}, None, None, False
+    
 def format_load_combination(load_case):
     """Convert load case code to readable combination"""
+    # First check session state for detected combinations
+    if 'detected_load_combinations' in st.session_state:
+        detected = st.session_state.detected_load_combinations
+        if load_case in detected:
+            return detected[load_case]
+    
+    # Fall back to default LOAD_COMBINATIONS
     if isinstance(load_case, str):
         # Check if it matches a known pattern
         for pattern, combination in LOAD_COMBINATIONS.items():
@@ -941,6 +981,81 @@ with tab3:
                 total_foundations = len(DEFAULT_FOUNDATIONS) + len(st.session_state.custom_foundations)
                 st.metric("Available Foundations", total_foundations)
             
+            # Auto-detect load combinations
+            st.markdown("### 🔍 Load Combination Detection")
+            
+            detected_combos, case_col, combo_col, found = extract_load_combinations_from_csv(df)
+            
+            if found:
+                st.success(f"✅ Detected {len(detected_combos)} load combinations from columns: '{case_col}' and '{combo_col}'")
+                
+                # Show detected combinations in expandable section
+                with st.expander(f"View Detected Load Combinations ({len(detected_combos)} total)", expanded=False):
+                    # Create display dataframe
+                    combo_display = pd.DataFrame([
+                        {'Load Case': case, 'Load Combination': combo}
+                        for case, combo in sorted(detected_combos.items())
+                    ])
+                    st.dataframe(combo_display, use_container_width=True, height=300)
+                    
+                    # Option to export detected combinations
+                    combo_json = json.dumps(detected_combos, indent=2)
+                    st.download_button(
+                        "📥 Export Load Combinations (JSON)",
+                        data=combo_json,
+                        file_name=f"load_combinations_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+                        mime="application/json"
+                    )
+                
+                # Update global LOAD_COMBINATIONS dictionary with detected values
+                if st.button("✅ Use Detected Load Combinations", type="primary"):
+                    # Merge with existing combinations (detected takes priority)
+                    LOAD_COMBINATIONS.update(detected_combos)
+                    st.session_state.detected_load_combinations = detected_combos
+                    st.success(f"Load combinations updated! Now using {len(detected_combos)} combinations from your file.")
+                    st.rerun()
+                
+                # Store in session state for use in analysis
+                st.session_state.detected_load_combinations = detected_combos
+                
+            else:
+                st.warning("⚠️ Could not auto-detect load combination columns. Looking for columns named 'Load Case' and 'Load Combination'.")
+                st.info("Expected column names: 'Load Case' (e.g., cLCB70) and 'Load Combination' (e.g., SERV :D + (L))")
+                
+                # Show available columns
+                st.write("**Available columns in your file:**")
+                st.write(", ".join(df.columns.tolist()))
+                
+                # Manual column selection fallback
+                st.markdown("#### Manual Column Selection")
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    manual_case_col = st.selectbox("Select Load Case Column", options=[''] + df.columns.tolist())
+                
+                with col2:
+                    manual_combo_col = st.selectbox("Select Load Combination Column", options=[''] + df.columns.tolist())
+                
+                if manual_case_col and manual_combo_col:
+                    if st.button("Extract Load Combinations"):
+                        # Manual extraction
+                        manual_combos = {}
+                        unique_combos = df[[manual_case_col, manual_combo_col]].drop_duplicates()
+                        
+                        for _, row in unique_combos.iterrows():
+                            case = str(row[manual_case_col]).strip()
+                            combination = str(row[manual_combo_col]).strip()
+                            if case and combination and case != 'nan' and combination != 'nan':
+                                manual_combos[case] = combination
+                        
+                        if manual_combos:
+                            st.success(f"✅ Extracted {len(manual_combos)} load combinations!")
+                            st.session_state.detected_load_combinations = manual_combos
+                            LOAD_COMBINATIONS.update(manual_combos)
+                            st.rerun()
+                        else:
+                            st.error("No valid combinations found in selected columns")
+            
             # Preview data
             with st.expander("Preview Data"):
                 st.dataframe(df.head(10), use_container_width=True)
@@ -980,15 +1095,29 @@ with tab3:
         # Show expected format
         st.subheader("Expected Data Format")
         example_df = pd.DataFrame({
-            'Node': [789, 790, 791],
-            'X': [0, 10, 20],
+            'Node': [29, 29, 29],
+            'X': [10, 10, 10],
             'Y': [0, 0, 0],
-            'Load Combination': ['cLCB5', 'cLCB6', 'cLCB9'],
-            'FZ (tonf)': [400, -50, 450],  # Include negative value for example
-            'MX (tonf·m)': [80, 70, 90],
-            'MY (tonf·m)': [60, 50, 70]
+            'Z': [-1.5, -1.5, -1.5],
+            'Load Case': ['cLCB70', 'cLCB71', 'cLCB72'],
+            'Load Combination': ['SERV :D + (L)', 'SERV :D + (L) + Wx', 'SERV :D + (L) + Wy'],
+            'FZ (tonf)': [791.16, 790.89, 786.26],
+            'MX (tonf·m)': [-92.68, -92.65, -82.15],
+            'MY (tonf·m)': [22.04, 13.23, 20.71]
         })
         st.dataframe(example_df, use_container_width=True)
+        
+        st.markdown("""
+        **Required Columns:**
+        - `Node` - Node number
+        - `Load Case` - Load case code (e.g., cLCB70, cLCB71)
+        - `Load Combination` - Full description (e.g., SERV :D + (L))
+        - `FZ (tonf)` or `Fz` - Vertical force
+        - `MX (tonf·m)` or `Mx` - Moment about X-axis
+        - `MY (tonf·m)` or `My` - Moment about Y-axis
+        
+        Optional: `X`, `Y`, `Z` coordinates for site plan visualization
+        """)
 
 with tab4:
     st.markdown('<h2 class="section-header">🔍 Foundation Properties Summary</h2>', unsafe_allow_html=True)
