@@ -272,7 +272,7 @@ class PileAnalyzer:
             st.error(f"No coordinates found for foundation {foundation_id}")
             return None
         
-        coords = coords * self.pile_spacing
+        # Coordinates are already properly scaled in the foundation definitions
         n_piles = len(coords)
         
         # Calculate centroid
