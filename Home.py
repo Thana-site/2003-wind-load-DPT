@@ -112,7 +112,6 @@ if 'foundation_properties' not in st.session_state:
 
 # ===================== DEFAULT CONFIGURATIONS =====================
 DEFAULT_FOUNDATIONS = {
-DEFAULT_FOUNDATIONS = {
     'F1': {
         'name': '1-Pile Single',
         'piles': 1,
