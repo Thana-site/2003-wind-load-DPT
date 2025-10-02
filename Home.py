@@ -1269,7 +1269,7 @@ with tab5:
         # Prepare display dataframe
         display_results = results.copy()
         
-        # Check if Load_Combination column exists
+        # Use Load_Combination (full description) instead of Load_Case (code)
         if 'Load_Combination' in display_results.columns:
             display_results['Display_Load'] = display_results['Load_Combination']
         else:
@@ -1747,13 +1747,13 @@ with tab7:  # Export tab
         display_critical['Mx_Display'] = display_critical['Mx_tonfm'].apply(lambda x: f"{x:.2f}")
         display_critical['My_Display'] = display_critical['My_tonfm'].apply(lambda x: f"{x:.2f}")
         
-        display_cols = ['Node', 'Number_of_Piles', 'Foundation_Type', 'Critical_Load_Combination',
+        display_cols = ['Node', 'Number_of_Piles', 'Foundation_Type', 'Critical_Load_Combination',  # Changed from Load_Case_Code
                        'Criticality_Display', 'Fz_Display', 'Mx_Display', 'My_Display',
                        'Load_Mag_Display', 'Moment_Int_Display', 'Utilization_Display', 
                        'Category', 'Is_Safe']
         
         display_critical_renamed = display_critical[display_cols].copy()
-        display_critical_renamed.columns = ['Node', 'Piles', 'Foundation', 'Critical Load Combo',
+        display_critical_renamed.columns = ['Node', 'Piles', 'Foundation', 'Critical Load Combination',  # This is correct
                                             'Criticality', 'Fz (tonf)', 'Mx (tonf·m)', 'My (tonf·m)',
                                             'Load Mag', 'Moment Int', 'Utilization', 'Category', 'Safe']
         
@@ -1825,8 +1825,10 @@ with tab7:  # Export tab
             export_critical['Load_Magnitude'] = export_critical['Load_Magnitude'].round(4)
             export_critical['Moment_Intensity'] = export_critical['Moment_Intensity'].round(4)
             
-            # Rename columns for clarity
+            # Rename columns for clarity - KEEP BOTH CODE AND DESCRIPTION
             export_renamed = export_critical.rename(columns={
+                'Load_Case_Code': 'Load_Case_Code',  # Keep the code
+                'Critical_Load_Combination': 'Critical_Load_Combination',  # Keep the full description
                 'Fz_tonf': 'Fz (tonf)',
                 'Mx_tonfm': 'Mx (tonf·m)',
                 'My_tonfm': 'My (tonf·m)',
@@ -1834,6 +1836,8 @@ with tab7:  # Export tab
                 'My_abs_tonfm': 'My_abs (tonf·m)',
                 'Max_Pile_Load_tonf': 'Max_Pile_Load (tonf)'
             })
+            
+            critical_csv = export_renamed.to_csv(index=False)
             
             critical_csv = export_renamed.to_csv(index=False)
             st.download_button(
@@ -1847,7 +1851,7 @@ with tab7:  # Export tab
         with col2:
             # Simplified report for quick review
             simplified_export = critical_df_sorted[[
-                'Node', 'Load_Case_Code', 'Critical_Load_Combination',
+                'Node', 'Critical_Load_Combination',  # Changed from Load_Case_Code - use full description
                 'Foundation_Type', 'Number_of_Piles',
                 'Fz_tonf', 'Mx_tonfm', 'My_tonfm', 
                 'Max_Pile_Load_tonf', 'Utilization_Ratio',
@@ -1861,7 +1865,7 @@ with tab7:  # Export tab
             simplified_export['Max_Pile_Load_tonf'] = simplified_export['Max_Pile_Load_tonf'].round(2)
             simplified_export['Utilization_Ratio'] = simplified_export['Utilization_Ratio'].round(4)
             
-            simplified_export.columns = ['Node', 'Load_Case', 'Load_Combination', 'Foundation',
+            simplified_export.columns = ['Node', 'Critical_Load_Combination', 'Foundation',  # Changed column name
                                         'Piles', 'Fz (tonf)', 'Mx (tonf·m)', 'My (tonf·m)',
                                         'Max_Pile_Load (tonf)', 'Utilization', 'Category', 'Safe']
             
