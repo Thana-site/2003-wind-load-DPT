@@ -1578,159 +1578,71 @@ with tab6:
 
 
 with tab7:  # Export tab
-    st.markdown('<h2 class="section-header">💾 Export Results</h2>', unsafe_allow_html=True)
-    
-    if st.session_state.final_results is not None:
-        results = st.session_state.final_results
-        
-        # ========== NEW: CRITICAL LOAD SUMMARY SECTION ==========
-        st.markdown("### 📊 Critical Load Case Summary by Node")
-        st.markdown("This section shows the most critical load case for each node (highest utilization ratio)")
-        
-        # Group by node and find the critical (maximum utilization) load case for each
-        critical_summary = []
-        
-        for node in results['Node'].unique():
-            node_data = results[results['Node'] == node]
-            # Find the row with maximum utilization for this node
-            critical_row = node_data.loc[node_data['utilization_ratio'].idxmax()]
-            
-            critical_summary.append({
-                'Node': critical_row['Node'],
-                'X': critical_row.get('X', 0),
-                'Y': critical_row.get('Y', 0),
-                'Z': critical_row.get('Z', 0),
-                'Critical_Load_Case': critical_row.get('Load_Case', 'N/A'),
-                'Critical_Load_Combination': critical_row.get('Load_Combination', 'N/A'),
-                'Foundation_Type': critical_row['foundation_id'],
-                'Foundation_Name': critical_row['foundation_name'],
-                'Number_of_Piles': int(critical_row['n_piles']),
-                'FX': critical_row.get('FX', 0),
-                'FY': critical_row.get('FY', 0),
-                'FZ': critical_row['Fz'],
-                'MX': critical_row['Mx'],
-                'MY': critical_row['My'],
-                'MZ': critical_row.get('MZ', 0),
-                'Max_Pile_Load': critical_row['max_pile_load'],
-                'Utilization_Ratio': critical_row['utilization_ratio'],
-                'Category': critical_row['category'],
-                'Is_Safe': critical_row['is_safe'],
-                'Has_Tension': critical_row.get('Has_Tension', False)
-            })
-        
-        critical_df = pd.DataFrame(critical_summary)
-        
-        # Sort by node number
-        critical_df = critical_df.sort_values('Node')
-        
-        # Display summary statistics
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            st.metric("Total Nodes", len(critical_df))
-        with col2:
-            avg_util = critical_df['Utilization_Ratio'].mean()
-            st.metric("Avg Critical Utilization", f"{avg_util:.1%}")
-        with col3:
-            max_util_node = critical_df.loc[critical_df['Utilization_Ratio'].idxmax(), 'Node']
-            max_util = critical_df['Utilization_Ratio'].max()
-            st.metric("Highest Utilization", f"Node {max_util_node}: {max_util:.1%}")
-        with col4:
-            unsafe_count = len(critical_df[~critical_df['Is_Safe']])
-            st.metric("Unsafe Nodes", unsafe_count, delta=f"{unsafe_count} nodes" if unsafe_count > 0 else "All Safe")
-        
-        # Display critical summary table
-        st.markdown("#### Critical Load Case Table")
-        
-        # Create formatted display dataframe
-        display_critical = critical_df.copy()
-        display_critical['Utilization_Ratio'] = display_critical['Utilization_Ratio'].apply(lambda x: f"{x:.1%}")
-        display_critical['Max_Pile_Load'] = display_critical['Max_Pile_Load'].apply(lambda x: f"{x:.2f}")
-        display_critical['FZ'] = display_critical['FZ'].apply(lambda x: f"{x:.2f}")
-        display_critical['MX'] = display_critical['MX'].apply(lambda x: f"{x:.2f}")
-        display_critical['MY'] = display_critical['MY'].apply(lambda x: f"{x:.2f}")
-        
-        # Select columns for display
-        display_cols = ['Node', 'X', 'Y', 'Z', 'Critical_Load_Case', 'Critical_Load_Combination',
-                       'Foundation_Type', 'Number_of_Piles', 'FZ', 'MX', 'MY',
-                       'Max_Pile_Load', 'Utilization_Ratio', 'Category', 'Is_Safe']
-        
-        # Rename for better display
-        display_critical_renamed = display_critical[display_cols].copy()
-        display_critical_renamed.columns = ['Node', 'X (m)', 'Y (m)', 'Z (m)', 'Load Case', 
-                                            'Load Combination', 'Foundation', 'Piles',
-                                            'Fz (tonf)', 'Mx (tonf·m)', 'My (tonf·m)',
-                                            'Max Pile Load (tonf)', 'Utilization', 'Category', 'Safe']
-        
-        # Style the dataframe
-        def highlight_critical(row):
-            if not row['Safe']:
-                return ['background-color: #ffcccc'] * len(row)
-            elif 'Over-Capacity' in str(row['Category']) or 'Near-Capacity' in str(row['Category']):
-                return ['background-color: #fff3cd'] * len(row)
-            elif 'Optimal' in str(row['Category']):
-                return ['background-color: #ccffcc'] * len(row)
-            else:
-                return [''] * len(row)
-        
-        styled_critical = display_critical_renamed.style.apply(highlight_critical, axis=1)
-        st.dataframe(styled_critical, use_container_width=True, height=400)
-        
-        # Legend
-        st.markdown("""
-        **Color Legend:**
-        - 🟩 Green: Optimal utilization (80-95%)
-        - 🟨 Yellow: Near-capacity or over-capacity warning
-        - 🟥 Red: Unsafe design (utilization > 100%)
-        """)
-        
-        # Export critical summary
+    # Export critical summary with criticality scores
         st.markdown("#### Export Critical Summary")
         
         col1, col2 = st.columns(2)
         
         with col1:
-            # Export as CSV
-            critical_csv = critical_df.to_csv(index=False)
+            # Export as CSV with all criticality metrics
+            export_critical = critical_df_sorted.copy()
+            export_critical['Criticality_Score'] = export_critical['Criticality_Score'].round(4)
+            export_critical['Load_Magnitude'] = export_critical['Load_Magnitude'].round(4)
+            export_critical['Moment_Intensity'] = export_critical['Moment_Intensity'].round(4)
+            export_critical['Utilization_Ratio'] = export_critical['Utilization_Ratio'].round(4)
+            
+            critical_csv = export_critical.to_csv(index=False)
             st.download_button(
-                "📥 Download Critical Summary (CSV)",
+                "Download Critical Summary with Scores (CSV)",
                 data=critical_csv,
-                file_name=f"critical_load_summary_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                file_name=f"critical_analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
                 mime="text/csv",
                 use_container_width=True
             )
         
         with col2:
-            # Export as Excel-friendly format
-            excel_format = critical_df.copy()
-            excel_format['Utilization_Ratio'] = excel_format['Utilization_Ratio'] * 100
-            excel_csv = excel_format.to_csv(index=False)
+            # Export simplified version for reporting
+            simplified_export = critical_df_sorted[[
+                'Node', 'Foundation_Type', 'Number_of_Piles', 
+                'Critical_Load_Combination', 'Fz', 'Mx', 'My',
+                'Max_Pile_Load', 'Utilization_Ratio', 'Criticality_Score',
+                'Is_Safe'
+            ]].copy()
+            
+            simplified_csv = simplified_export.to_csv(index=False)
             st.download_button(
-                "📥 Download Critical Summary (Excel Format)",
-                data=excel_csv,
-                file_name=f"critical_summary_excel_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                "Download Simplified Report (CSV)",
+                data=simplified_csv,
+                file_name=f"foundation_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
                 mime="text/csv",
                 use_container_width=True
             )
         
-        # ========== ORIGINAL EXPORT SECTIONS ==========
+        # Complete results with all load cases
         st.markdown("---")
-        st.markdown("### 📦 Complete Results Export")
+        st.markdown("### Complete Analysis (All Load Cases)")
         
         col1, col2 = st.columns(2)
         
         with col1:
-            # Export CSV with all details
-            export_df = results.copy()
-            if 'Load_Combination' in export_df.columns:
-                export_df['Critical_Load_Combination'] = export_df['Load_Combination']
-            else:
-                export_df['Critical_Load_Combination'] = export_df.get('Load_Case', 'N/A')
+            # Export all results with criticality scores
+            complete_export = results_with_criticality.copy()
             
-            csv = export_df.to_csv(index=False)
+            # Select relevant columns
+            export_columns = ['Node', 'X', 'Y', 'Z', 'Load_Case', 'Load_Combination',
+                            'foundation_id', 'foundation_name', 'n_piles',
+                            'Fz', 'Mx', 'My', 'max_pile_load', 
+                            'utilization_ratio', 'criticality_score',
+                            'load_magnitude', 'moment_intensity',
+                            'category', 'is_safe', 'Has_Tension']
+            
+            complete_export_filtered = complete_export[export_columns]
+            
+            complete_csv = complete_export_filtered.to_csv(index=False)
             st.download_button(
-                "📥 Download Complete Results (CSV)",
-                data=csv,
-                file_name=f"pile_analysis_complete_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                "Download All Load Cases (CSV)",
+                data=complete_csv,
+                file_name=f"all_load_cases_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
                 mime="text/csv",
                 use_container_width=True
             )
@@ -1740,19 +1652,18 @@ with tab7:  # Export tab
             if st.session_state.foundation_properties:
                 props_json = json.dumps(st.session_state.foundation_properties, indent=2)
                 st.download_button(
-                    "📥 Export Foundation Properties (JSON)",
+                    "Export Foundation Properties (JSON)",
                     data=props_json,
-                    file_name=f"foundation_properties_{datetime.now().strftime('%Y%m%d')}.json",
+                    file_name=f"foundation_properties_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
                     mime="application/json",
                     use_container_width=True
                 )
         
-        # Generate comprehensive report
+        # Comprehensive report with criticality methodology
         st.markdown("---")
-        st.markdown("### 📄 Comprehensive Analysis Report")
+        st.markdown("### Comprehensive Analysis Report")
         
-        tension_count = len(st.session_state.tension_nodes)
-        report = f"""# Pile Foundation Analysis Report
+        report = f"""# Pile Foundation Analysis Report - Multi-Factor Criticality Assessment
 Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 
 ## Configuration
@@ -1760,77 +1671,97 @@ Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 - Pile Capacity: {pile_capacity} tonf
 - Target Utilization: {target_utilization:.0%}
 
-## Results Summary
-- Total Nodes Analyzed: {len(results)}
-- Unique Nodes: {len(critical_df)}
-- Average Critical Utilization: {critical_df['Utilization_Ratio'].mean():.1%}
-- Maximum Utilization: {critical_df['Utilization_Ratio'].max():.1%} (Node {critical_df.loc[critical_df['Utilization_Ratio'].idxmax(), 'Node']})
-- Safe Designs: {len(critical_df[critical_df['Is_Safe']])} / {len(critical_df)}
-- Total Piles Required: {int(critical_df['Number_of_Piles'].sum())}
-- Nodes with Tension: {tension_count}
+## Criticality Scoring Methodology
+This analysis uses a composite criticality score considering multiple factors:
 
-## Critical Load Cases by Node
+### Scoring Weights (Normalized)
+- Utilization Ratio Weight: {w_util:.2f}
+- Load Magnitude Weight: {w_load:.2f}
+- Moment Intensity Weight: {w_moment:.2f}
+- Pile Count Weight: {w_piles:.2f}
+
+### Calculation Method
+Criticality Score = w_util × (Utilization/Max_Util) + 
+                    w_load × (Load_Magnitude/Max_Load) + 
+                    w_moment × (Moment_Intensity/Max_Moment) +
+                    w_piles × (N_Piles/Max_Piles)
+
+Where:
+- Load_Magnitude = √(Fz² + Mx² + My²) / √3
+- Moment_Intensity = √(Mx² + My²) / √2
+
+## Critical Load Summary (One per Node)
+Total Nodes: {len(critical_df)}
+Average Criticality Score: {critical_df['Criticality_Score'].mean():.3f}
+Maximum Criticality: {critical_df['Criticality_Score'].max():.3f} (Node {critical_df.loc[critical_df['Criticality_Score'].idxmax(), 'Node']})
+Average Utilization: {critical_df['Utilization_Ratio'].mean():.1%}
+Safe Designs: {len(critical_df[critical_df['Is_Safe']])} / {len(critical_df)}
+Total Piles Required: {int(critical_df['Number_of_Piles'].sum())}
+
+## Top 10 Most Critical Nodes
 """
         
-        # Add critical summary to report
-        for _, row in critical_df.iterrows():
+        # Add top 10 critical nodes
+        top_10 = critical_df.nlargest(10, 'Criticality_Score')
+        for idx, row in top_10.iterrows():
             report += f"""
-### Node {int(row['Node'])}
-- Location: ({row['X']:.2f}, {row['Y']:.2f}, {row['Z']:.2f})
-- Critical Load Case: {row['Critical_Load_Case']}
+### Node {int(row['Node'])} - Criticality: {row['Criticality_Score']:.3f}
+- Foundation: {row['Foundation_Type']} ({row['Foundation_Name']})
+- Piles: {row['Number_of_Piles']}
 - Load Combination: {row['Critical_Load_Combination']}
-- Foundation Type: {row['Foundation_Type']} ({row['Foundation_Name']})
-- Number of Piles: {row['Number_of_Piles']}
-- Forces: Fz={row['FZ']:.2f} tonf, Mx={row['MX']:.2f} tonf·m, My={row['MY']:.2f} tonf·m
+- Forces: Fz={row['Fz']:.2f} tonf, Mx={row['Mx']:.2f} tonf·m, My={row['My']:.2f} tonf·m
 - Max Pile Load: {row['Max_Pile_Load']:.2f} tonf
-- Utilization Ratio: {row['Utilization_Ratio']:.1%}
-- Category: {row['Category']}
+- Utilization: {row['Utilization_Ratio']:.1%}
+- Load Magnitude: {row['Load_Magnitude']:.3f}
+- Moment Intensity: {row['Moment_Intensity']:.3f}
 - Status: {'✅ Safe' if row['Is_Safe'] else '❌ Over-capacity'}
 """
         
-        report += "\n\n## Foundation Distribution\n"
-        report += critical_df['Foundation_Type'].value_counts().to_string()
+        report += "\n\n## Foundation Distribution by Criticality\n"
+        foundation_crit = critical_df.groupby('Foundation_Type').agg({
+            'Node': 'count',
+            'Number_of_Piles': 'first',
+            'Criticality_Score': 'mean',
+            'Utilization_Ratio': 'mean'
+        }).round(3)
+        report += foundation_crit.to_string()
         
-        report += "\n\n## Warnings\n"
+        report += "\n\n## Warnings and Recommendations\n"
         
-        if tension_count > 0:
-            report += f"\n### ⚠️ TENSION WARNING\n"
-            report += f"{tension_count} load cases have tensile forces (negative Fz).\n"
-            report += "These require special foundation design considerations.\n\n"
-            for tension_node in st.session_state.tension_nodes:
-                report += f"- Node {tension_node['Node']}: Fz = {tension_node['Fz']:.2f} tonf\n"
+        # High criticality nodes
+        high_crit = critical_df[critical_df['Criticality_Score'] > 0.8]
+        if len(high_crit) > 0:
+            report += f"\n### High Criticality Nodes (Score > 0.8)\n"
+            report += f"{len(high_crit)} nodes require special attention:\n"
+            for _, row in high_crit.iterrows():
+                report += f"- Node {int(row['Node'])}: Criticality={row['Criticality_Score']:.3f}, Utilization={row['Utilization_Ratio']:.1%}\n"
         
+        # Unsafe designs
         unsafe_nodes = critical_df[~critical_df['Is_Safe']]
         if len(unsafe_nodes) > 0:
             report += f"\n### ❌ UNSAFE DESIGNS\n"
-            report += f"{len(unsafe_nodes)} nodes have utilization exceeding capacity:\n\n"
+            report += f"{len(unsafe_nodes)} nodes exceed pile capacity:\n"
             for _, row in unsafe_nodes.iterrows():
                 report += f"- Node {int(row['Node'])}: {row['Utilization_Ratio']:.1%} utilization ({row['Foundation_Type']})\n"
         
-        report += """
-## Foundation Properties Summary
-"""
-        for fid in critical_df['Foundation_Type'].unique():
-            if fid in st.session_state.foundation_properties:
-                props = st.session_state.foundation_properties[fid]
-                report += f"""
-### {fid}
-- Number of Piles: {props['n_piles']}
-- Ixx: {props['Ixx']:.3f} m²
-- Iyy: {props['Iyy']:.3f} m²
-- cx_max: {props['cx_max']:.3f} m
-- cy_max: {props['cy_max']:.3f} m
-- Zx: {props['Zx']:.3f} m²
-- Zy: {props['Zy']:.3f} m²
-"""
+        # Tension nodes
+        tension_count = len(st.session_state.tension_nodes)
+        if tension_count > 0:
+            report += f"\n### ⚠️ TENSION CONDITIONS\n"
+            report += f"{tension_count} load cases have tensile forces requiring special design.\n"
         
         st.download_button(
-            "📄 Download Comprehensive Report (MD)",
+            "Download Comprehensive Report (MD)",
             data=report,
-            file_name=f"analysis_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md",
+            file_name=f"criticality_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md",
             mime="text/markdown",
             use_container_width=True
         )
+        
+        st.success("Export options ready! All files include multi-factor criticality assessment.")
+    
+    else:
+        st.info("No results to export. Run analysis first.")
         
         st.success("✅ Export options ready!")
     else:
