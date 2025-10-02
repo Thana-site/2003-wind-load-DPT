@@ -1063,8 +1063,9 @@ with tab3:
                             st.error("No valid combinations found in selected columns")
             
             # Preview data
-            with st.expander("Preview Data"):
-                st.dataframe(df.head(10), use_container_width=True)
+            with st.expander("Preview Data", expanded=False):
+                st.info(f"Showing all {len(df)} rows of data")
+                st.dataframe(df, use_container_width=True, height=600)
             
             # Check for tension nodes before analysis
             tension_check = check_tension_nodes(df[df['Node'].isin(selected_nodes)])
@@ -1886,30 +1887,47 @@ Where:
 - Moment_Intensity = √(Mx² + My²) / √2
 
 ## Critical Load Summary (One per Node)
-Total Nodes: {len(critical_df)}
+Total Nodes Analyzed: {len(critical_df)}
 Average Criticality Score: {critical_df['Criticality_Score'].mean():.3f}
-Maximum Criticality: {critical_df['Criticality_Score'].max():.3f} (Node {critical_df.loc[critical_df['Criticality_Score'].idxmax(), 'Node']})
+Maximum Criticality Score: {critical_df['Criticality_Score'].max():.3f}
 Average Utilization: {critical_df['Utilization_Ratio'].mean():.1%}
 Safe Designs: {len(critical_df[critical_df['Is_Safe']])} / {len(critical_df)}
 Total Piles Required: {int(critical_df['Number_of_Piles'].sum())}
 
-## Top 10 Most Critical Nodes
-"""
-        
-        # Add top 10 critical nodes
-        top_10 = critical_df.nlargest(10, 'Criticality_Score')
-        for idx, row in top_10.iterrows():
-            report += f"""
-### Node {int(row['Node'])} - Criticality: {row['Criticality_Score']:.3f}
-- Foundation: {row['Foundation_Type']} ({row['Foundation_Name']})
-- Piles: {row['Number_of_Piles']}
-- Load Combination: {row['Critical_Load_Combination']}
-- Forces: Fz={row['Fz']:.2f} tonf, Mx={row['Mx']:.2f} tonf·m, My={row['My']:.2f} tonf·m
-- Max Pile Load: {row['Max_Pile_Load']:.2f} tonf
-- Utilization: {row['Utilization_Ratio']:.1%}
-- Load Magnitude: {row['Load_Magnitude']:.3f}
-- Moment Intensity: {row['Moment_Intensity']:.3f}
-- Status: {'✅ Safe' if row['Is_Safe'] else '❌ Over-capacity'}
+## MOST CRITICAL NODE (Highest Criticality Score)
+Node {int(critical_df.loc[critical_df['Criticality_Score'].idxmax(), 'Node'])}:
+- Criticality Score: {critical_df['Criticality_Score'].max():.3f}
+- Foundation Type: {critical_df.loc[critical_df['Criticality_Score'].idxmax(), 'Foundation_Type']}
+- Foundation Name: {critical_df.loc[critical_df['Criticality_Score'].idxmax(), 'Foundation_Name']}
+- Number of Piles: {int(critical_df.loc[critical_df['Criticality_Score'].idxmax(), 'Number_of_Piles'])}
+- Critical Load Combination: {critical_df.loc[critical_df['Criticality_Score'].idxmax(), 'Critical_Load_Combination']}
+- Fz: {critical_df.loc[critical_df['Criticality_Score'].idxmax(), 'Fz']:.2f} tonf
+- Mx: {critical_df.loc[critical_df['Criticality_Score'].idxmax(), 'Mx']:.2f} tonf·m
+- My: {critical_df.loc[critical_df['Criticality_Score'].idxmax(), 'My']:.2f} tonf·m
+- Max Pile Load: {critical_df.loc[critical_df['Criticality_Score'].idxmax(), 'Max_Pile_Load']:.2f} tonf
+- Utilization Ratio: {critical_df.loc[critical_df['Criticality_Score'].idxmax(), 'Utilization_Ratio']:.1%}
+- Status: {'SAFE' if critical_df.loc[critical_df['Criticality_Score'].idxmax(), 'Is_Safe'] else 'UNSAFE - OVER CAPACITY'}
+
+## NODE WITH MOST PILES
+Node {int(critical_df.loc[critical_df['Number_of_Piles'].idxmax(), 'Node'])}:
+- Number of Piles: {int(critical_df['Number_of_Piles'].max())}
+- Foundation Type: {critical_df.loc[critical_df['Number_of_Piles'].idxmax(), 'Foundation_Type']}
+- Foundation Name: {critical_df.loc[critical_df['Number_of_Piles'].idxmax(), 'Foundation_Name']}
+- Critical Load Combination: {critical_df.loc[critical_df['Number_of_Piles'].idxmax(), 'Critical_Load_Combination']}
+- Utilization Ratio: {critical_df.loc[critical_df['Number_of_Piles'].idxmax(), 'Utilization_Ratio']:.1%}
+- Criticality Score: {critical_df.loc[critical_df['Number_of_Piles'].idxmax(), 'Criticality_Score']:.3f}
+
+## NODE WITH HIGHEST UTILIZATION
+Node {int(critical_df.loc[critical_df['Utilization_Ratio'].idxmax(), 'Node'])}:
+- Utilization Ratio: {critical_df['Utilization_Ratio'].max():.1%}
+- Foundation Type: {critical_df.loc[critical_df['Utilization_Ratio'].idxmax(), 'Foundation_Type']}
+- Number of Piles: {int(critical_df.loc[critical_df['Utilization_Ratio'].idxmax(), 'Number_of_Piles'])}
+- Critical Load Combination: {critical_df.loc[critical_df['Utilization_Ratio'].idxmax(), 'Critical_Load_Combination']}
+- Max Pile Load: {critical_df.loc[critical_df['Utilization_Ratio'].idxmax(), 'Max_Pile_Load']:.2f} tonf
+- Pile Capacity: {pile_capacity} tonf
+- Status: {'SAFE' if critical_df.loc[critical_df['Utilization_Ratio'].idxmax(), 'Is_Safe'] else 'UNSAFE - OVER CAPACITY'}
+
+## Top 10 Most Critical Nodes (by Criticality Score)
 """
         
         report += "\n\n## Foundation Distribution by Criticality\n"
