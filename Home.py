@@ -396,6 +396,67 @@ class PileAnalyzer:
         return min(results, key=lambda x: x['utilization_ratio'])
 
 # ===================== HELPER FUNCTIONS =====================
+def create_load_combination_lookup(df):
+    """
+    Create master lookup dictionary mapping load case codes to descriptions.
+    This runs once when CSV is loaded and stores in session state.
+    """
+    lookup = {}
+    
+    # Try to find Load Case and Load Combination columns
+    case_col = None
+    combo_col = None
+    
+    for col in df.columns:
+        col_lower = col.lower().strip()
+        if 'load case' in col_lower and case_col is None:
+            case_col = col
+        elif 'load combination' in col_lower and combo_col is None:
+            combo_col = col
+    
+    if case_col and combo_col:
+        # Extract unique code-to-description mappings
+        unique_combos = df[[case_col, combo_col]].drop_duplicates()
+        
+        for _, row in unique_combos.iterrows():
+            code = str(row[case_col]).strip()
+            desc = str(row[combo_col]).strip()
+            
+            # Skip invalid entries
+            if code and desc and code != 'nan' and desc != 'nan':
+                lookup[code] = desc
+        
+        st.session_state.load_combination_lookup = lookup
+        return lookup, True
+    
+    # Fallback to default LOAD_COMBINATIONS
+    st.session_state.load_combination_lookup = LOAD_COMBINATIONS.copy()
+    return LOAD_COMBINATIONS.copy(), False
+
+def get_load_combination_name(code):
+    """
+    Convert load case code to descriptive name using master lookup.
+    Always use this function when displaying load combinations.
+    """
+    if not code or code == 'nan':
+        return 'N/A'
+    
+    code = str(code).strip()
+    
+    # Check session state lookup first
+    if 'load_combination_lookup' in st.session_state:
+        lookup = st.session_state.load_combination_lookup
+        if code in lookup:
+            return lookup[code]
+    
+    # Fallback to format_load_combination
+    formatted = format_load_combination(code)
+    if formatted != code:
+        return formatted
+    
+    # Last resort: return the code itself
+    return code
+
 def extract_load_combinations_from_csv(df):
     """Automatically extract load combinations from CSV and build dictionary"""
     load_combo_dict = {}
@@ -526,51 +587,24 @@ def process_analysis(df, selected_nodes, analyzer, target_utilization=0.85):
         Mx = abs(Mx_raw)
         My = abs(My_raw)
         
-        # ===== IMPROVED LOAD CASE/COMBINATION EXTRACTION =====
+        # ===== SIMPLIFIED: Just get the code, lookup handles the rest =====
         load_case_code = None
-        load_combination_desc = None
         
-        # Step 1: Get the load case code
         if 'Load Case' in row.index and pd.notna(row['Load Case']):
             load_case_code = str(row['Load Case']).strip()
-        
-        # Step 2: Get the load combination description
-        if 'Load Combination' in row.index and pd.notna(row['Load Combination']):
-            raw_combo = str(row['Load Combination']).strip()
-            # Check if it's already a description (contains "SERV" or ":")
-            if 'SERV' in raw_combo or ':' in raw_combo:
-                load_combination_desc = raw_combo
-                # If we don't have a code yet, try to extract it from the description
-                if not load_case_code:
-                    match = re.search(r'(cLCB\d+|LC_?\d+)', raw_combo)
-                    if match:
-                        load_case_code = match.group(1)
+        elif 'Load Combination' in row.index and pd.notna(row['Load Combination']):
+            # Try to extract code from combination column
+            raw = str(row['Load Combination']).strip()
+            match = re.search(r'(cLCB\d+|LC_?\d+)', raw)
+            if match:
+                load_case_code = match.group(1)
             else:
-                # It's probably a code, use it as the code
-                if not load_case_code:
-                    load_case_code = raw_combo
-        
-        # Step 3: If we still don't have a code, create one
-        if not load_case_code:
+                load_case_code = raw
+        else:
             load_case_code = f'LC_{idx}'
         
-        # Step 4: If we don't have a description, try to format the code
-        if not load_combination_desc:
-            # Try detected combinations from session state
-            if 'detected_load_combinations' in st.session_state:
-                detected = st.session_state.detected_load_combinations
-                if load_case_code in detected:
-                    load_combination_desc = detected[load_case_code]
-            
-            # Try format_load_combination function
-            if not load_combination_desc:
-                formatted = format_load_combination(load_case_code)
-                if formatted != load_case_code:
-                    load_combination_desc = formatted
-            
-            # Final fallback: use the code
-            if not load_combination_desc:
-                load_combination_desc = load_case_code
+        # Use the lookup to get descriptive name
+        load_combination_name = get_load_combination_name(load_case_code)
         
         # Check for manual assignment
         node = row['Node']
@@ -596,8 +630,8 @@ def process_analysis(df, selected_nodes, analyzer, target_utilization=0.85):
             result['My'] = My_raw
             result['Mx_abs'] = Mx
             result['My_abs'] = My
-            result['Load_Case'] = load_case_code  # The code (e.g., "cLCB70", "LC_3511")
-            result['Load_Combination'] = load_combination_desc  # The description (e.g., "SERV : D + (L)")
+            result['Load_Case'] = load_case_code  # Store the code
+            result['Load_Combination'] = load_combination_name  # Store the descriptive name
             result['Has_Tension'] = Fz_raw < 0
             
             results.append(result)
@@ -1097,6 +1131,43 @@ with tab3:
         
         if df is not None:
             st.success(message)
+            
+            # ===== CREATE MASTER LOAD COMBINATION LOOKUP =====
+            lookup, found = create_load_combination_lookup(df)
+            
+            if found:
+                st.success(f"✅ Created load combination lookup with {len(lookup)} mappings")
+                
+                with st.expander(f"📋 Load Combination Lookup Table ({len(lookup)} entries)", expanded=False):
+                    lookup_df = pd.DataFrame([
+                        {'Load Case Code': code, 'Load Combination Description': desc}
+                        for code, desc in sorted(lookup.items(), key=lambda x: sort_load_cases(x[0]))
+                    ])
+                    st.dataframe(lookup_df, use_container_width=True, height=400)
+            else:
+                st.info("Using default load combination patterns")
+            
+            # ===== ADD DEBUG SECTION HERE =====
+            st.markdown("---")
+            if st.checkbox("🐛 Show Load Combination Lookup Debug"):
+                if 'load_combination_lookup' in st.session_state:
+                    st.write("**Current Lookup Dictionary:**")
+                    st.json(st.session_state.load_combination_lookup)
+                    
+                    st.write(f"**Total entries:** {len(st.session_state.load_combination_lookup)}")
+                    
+                    # Show a test lookup
+                    st.write("**Test Lookup:**")
+                    test_code = st.text_input("Enter a load case code to test (e.g., LC_3511, cLCB70)")
+                    if test_code:
+                        result = get_load_combination_name(test_code)
+                        if result == test_code:
+                            st.warning(f"❌ No mapping found for '{test_code}' - showing code as-is")
+                        else:
+                            st.success(f"✅ '{test_code}' → '{result}'")
+                else:
+                    st.warning("Lookup not created yet - upload CSV first")
+            st.markdown("---")
             
             # Data overview
             col1, col2, col3, col4 = st.columns(4)
@@ -1780,21 +1851,22 @@ with tab7:  # Export tab
         )
         
         # Find critical load case per node based on criticality score
+        # Find critical load case per node based on criticality score
         critical_summary = []
         
         for node in results_with_criticality['Node'].unique():
             node_data = results_with_criticality[results_with_criticality['Node'] == node]
             critical_row = node_data.loc[node_data['criticality_score'].idxmax()]
             
-            # Extract load case code and description - now simpler since process_analysis handles it
+            # Simply extract the stored values - lookup already happened in process_analysis
             load_case_code = str(critical_row.get('Load_Case', 'N/A')).strip()
-            load_combo_desc = str(critical_row.get('Load_Combination', load_case_code)).strip()
+            load_combo_name = str(critical_row.get('Load_Combination', 'N/A')).strip()
             
-            # Clean up any 'nan' values
+            # Clean up 'nan' values
             if load_case_code == 'nan':
                 load_case_code = 'N/A'
-            if load_combo_desc == 'nan' or not load_combo_desc:
-                load_combo_desc = load_case_code
+            if load_combo_name == 'nan' or not load_combo_name:
+                load_combo_name = get_load_combination_name(load_case_code)  # Try lookup again
             
             critical_summary.append({
                 'Node': int(critical_row['Node']),
@@ -1802,7 +1874,7 @@ with tab7:  # Export tab
                 'Y': float(critical_row.get('Y', 0)),
                 'Z': float(critical_row.get('Z', 0)),
                 'Load_Case_Code': load_case_code,
-                'Load_Combination_Name': load_combo_desc,
+                'Load_Combination_Name': load_combo_name,
                 'Foundation_Type': str(critical_row['foundation_id']),
                 'Foundation_Name': str(critical_row['foundation_name']),
                 'Number_of_Piles': int(critical_row['n_piles']),
@@ -2058,6 +2130,9 @@ with tab7:  # Export tab
         highest_util_idx = critical_df['Utilization_Ratio'].idxmax()
         
         report = f"""# Pile Foundation Analysis Report
+
+
+        
 ## Multi-Factor Criticality Assessment
 
 Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
