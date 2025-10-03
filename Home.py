@@ -526,34 +526,51 @@ def process_analysis(df, selected_nodes, analyzer, target_utilization=0.85):
         Mx = abs(Mx_raw)
         My = abs(My_raw)
         
-        # Get load case code and combination - FIX: Initialize variables first
-        load_case_code = 'N/A'
-        load_combination = 'N/A'
+        # ===== IMPROVED LOAD CASE/COMBINATION EXTRACTION =====
+        load_case_code = None
+        load_combination_desc = None
         
-        # Try to get Load Case
-        if 'Load Case' in row.index:
+        # Step 1: Get the load case code
+        if 'Load Case' in row.index and pd.notna(row['Load Case']):
             load_case_code = str(row['Load Case']).strip()
-        elif 'Load Combination' in row.index:
-            # If only Load Combination exists, extract code from it or use as-is
-            combo_raw = str(row['Load Combination']).strip()
-            # Try to extract code pattern (like cLCB70)
-            match = re.search(r'(cLCB\d+|LC_?\d+)', combo_raw)
-            if match:
-                load_case_code = match.group(1)
+        
+        # Step 2: Get the load combination description
+        if 'Load Combination' in row.index and pd.notna(row['Load Combination']):
+            raw_combo = str(row['Load Combination']).strip()
+            # Check if it's already a description (contains "SERV" or ":")
+            if 'SERV' in raw_combo or ':' in raw_combo:
+                load_combination_desc = raw_combo
+                # If we don't have a code yet, try to extract it from the description
+                if not load_case_code:
+                    match = re.search(r'(cLCB\d+|LC_?\d+)', raw_combo)
+                    if match:
+                        load_case_code = match.group(1)
             else:
-                load_case_code = combo_raw
-        else:
+                # It's probably a code, use it as the code
+                if not load_case_code:
+                    load_case_code = raw_combo
+        
+        # Step 3: If we still don't have a code, create one
+        if not load_case_code:
             load_case_code = f'LC_{idx}'
         
-        # Get load combination description
-        if 'Load Combination' in row.index:
-            combo_raw = str(row['Load Combination']).strip()
-            if combo_raw and combo_raw != 'nan':
-                load_combination = combo_raw
-            else:
-                load_combination = format_load_combination(load_case_code)
-        else:
-            load_combination = format_load_combination(load_case_code)
+        # Step 4: If we don't have a description, try to format the code
+        if not load_combination_desc:
+            # Try detected combinations from session state
+            if 'detected_load_combinations' in st.session_state:
+                detected = st.session_state.detected_load_combinations
+                if load_case_code in detected:
+                    load_combination_desc = detected[load_case_code]
+            
+            # Try format_load_combination function
+            if not load_combination_desc:
+                formatted = format_load_combination(load_case_code)
+                if formatted != load_case_code:
+                    load_combination_desc = formatted
+            
+            # Final fallback: use the code
+            if not load_combination_desc:
+                load_combination_desc = load_case_code
         
         # Check for manual assignment
         node = row['Node']
@@ -579,8 +596,8 @@ def process_analysis(df, selected_nodes, analyzer, target_utilization=0.85):
             result['My'] = My_raw
             result['Mx_abs'] = Mx
             result['My_abs'] = My
-            result['Load_Case'] = load_case_code  # Now defined
-            result['Load_Combination'] = load_combination  # Now defined
+            result['Load_Case'] = load_case_code  # The code (e.g., "cLCB70", "LC_3511")
+            result['Load_Combination'] = load_combination_desc  # The description (e.g., "SERV : D + (L)")
             result['Has_Tension'] = Fz_raw < 0
             
             results.append(result)
@@ -1769,33 +1786,14 @@ with tab7:  # Export tab
             node_data = results_with_criticality[results_with_criticality['Node'] == node]
             critical_row = node_data.loc[node_data['criticality_score'].idxmax()]
             
-            # Extract load case code (e.g., "cLCB70", "LC_3511")
+            # Extract load case code and description - now simpler since process_analysis handles it
             load_case_code = str(critical_row.get('Load_Case', 'N/A')).strip()
+            load_combo_desc = str(critical_row.get('Load_Combination', load_case_code)).strip()
             
-            # Extract load combination description with proper fallback logic
-            # Priority: 1) Load_Combination column, 2) Format the code, 3) Session state, 4) Use code
-            load_combo_desc = None
-            
-            # Try Load_Combination column first
-            if 'Load_Combination' in critical_row.index:
-                potential_desc = str(critical_row['Load_Combination']).strip()
-                if potential_desc and potential_desc != 'nan' and potential_desc != load_case_code:
-                    load_combo_desc = potential_desc
-            
-            # Try formatting the code
-            if not load_combo_desc:
-                formatted = format_load_combination(load_case_code)
-                if formatted != load_case_code:
-                    load_combo_desc = formatted
-            
-            # Try session state detected combinations
-            if not load_combo_desc and 'detected_load_combinations' in st.session_state:
-                detected = st.session_state.detected_load_combinations
-                if load_case_code in detected:
-                    load_combo_desc = detected[load_case_code]
-            
-            # Final fallback: use the code itself
-            if not load_combo_desc:
+            # Clean up any 'nan' values
+            if load_case_code == 'nan':
+                load_case_code = 'N/A'
+            if load_combo_desc == 'nan' or not load_combo_desc:
                 load_combo_desc = load_case_code
             
             critical_summary.append({
