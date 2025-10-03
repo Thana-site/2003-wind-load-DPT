@@ -518,31 +518,42 @@ def process_analysis(df, selected_nodes, analyzer, target_utilization=0.85):
     for idx, row in df_filtered.iterrows():
         # Extract loads - preserve original values
         Fz_raw = row.get('FZ (tonf)', row.get('Fz', 0))
-        Mx_raw = row.get('MX (tonf·m)', row.get('Mx', 0))  # Original signed value
-        My_raw = row.get('MY (tonf·m)', row.get('My', 0))  # Original signed value
+        Mx_raw = row.get('MX (tonf·m)', row.get('Mx', 0))
+        My_raw = row.get('MY (tonf·m)', row.get('My', 0))
         
         # Use absolute values for calculation
         Fz = abs(Fz_raw)
         Mx = abs(Mx_raw)
         My = abs(My_raw)
         
-        # Get load combination - handle both column names
-        if 'Load Combination' in row:
-            load_combo_raw = row['Load Combination']
-            load_case_code = row.get('Load Case', f'LC_{idx}')
-        elif 'Load Case' in row:
-            load_case_code = row['Load Case']
-            load_combo_raw = load_case_code  # Will be formatted below
+        # Get load case code and combination - FIX: Initialize variables first
+        load_case_code = 'N/A'
+        load_combination = 'N/A'
+        
+        # Try to get Load Case
+        if 'Load Case' in row.index:
+            load_case_code = str(row['Load Case']).strip()
+        elif 'Load Combination' in row.index:
+            # If only Load Combination exists, extract code from it or use as-is
+            combo_raw = str(row['Load Combination']).strip()
+            # Try to extract code pattern (like cLCB70)
+            match = re.search(r'(cLCB\d+|LC_?\d+)', combo_raw)
+            if match:
+                load_case_code = match.group(1)
+            else:
+                load_case_code = combo_raw
         else:
             load_case_code = f'LC_{idx}'
-            load_combo_raw = f'LC_{idx}'
         
-        # Format the combination to get descriptive name
-        load_combination = format_load_combination(load_combo_raw)
-        
-        # Store both in results
-        result['Load_Case'] = load_case_code  # The code (e.g., cLCB70)
-        result['Load_Combination'] = load_combination  # The description (e.g., SERV : D + (L))
+        # Get load combination description
+        if 'Load Combination' in row.index:
+            combo_raw = str(row['Load Combination']).strip()
+            if combo_raw and combo_raw != 'nan':
+                load_combination = combo_raw
+            else:
+                load_combination = format_load_combination(load_case_code)
+        else:
+            load_combination = format_load_combination(load_case_code)
         
         # Check for manual assignment
         node = row['Node']
@@ -563,13 +574,13 @@ def process_analysis(df, selected_nodes, analyzer, target_utilization=0.85):
             result['Y'] = row.get('Y', 0)
             result['Z'] = row.get('Z', 0)
             result['Fz'] = Fz
-            result['Fz_raw'] = Fz_raw  # Store raw value for tension check
-            result['Mx'] = Mx_raw      # Store ORIGINAL signed value for display
-            result['My'] = My_raw      # Store ORIGINAL signed value for display
-            result['Mx_abs'] = Mx      # Store absolute value used in calculation
-            result['My_abs'] = My      # Store absolute value used in calculation
-            result['Load_Case'] = load_case_raw
-            result['Load_Combination'] = load_combination
+            result['Fz_raw'] = Fz_raw
+            result['Mx'] = Mx_raw
+            result['My'] = My_raw
+            result['Mx_abs'] = Mx
+            result['My_abs'] = My
+            result['Load_Case'] = load_case_code  # Now defined
+            result['Load_Combination'] = load_combination  # Now defined
             result['Has_Tension'] = Fz_raw < 0
             
             results.append(result)
@@ -662,6 +673,100 @@ def create_custom_foundation_ui():
                 n = st.slider("Number of Piles", 3, 20, 8, key="circle_n")
                 radius = st.slider("Radius", 1.0, 5.0, 2.0, 0.1, key="circle_radius")
                 center = st.checkbox("Include Center", key="circle_center")             
+                coordinates = []
+                if center:
+                    coordinates.append((0, 0))
+                for i in range(n):
+                    angle = 2 * np.pi * i / n
+                    x = radius * np.cos(angle)
+                    y = radius * np.sin(angle)
+                    coordinates.append((round(x, 2), round(y, 2)))
+            
+            elif template == "Rectangle":
+                rows = st.slider("Rows", 2, 6, 3, key="rect_rows")
+                cols = st.slider("Columns", 2, 6, 3, key="rect_cols")
+                
+                coordinates = []
+                for i in range(rows):
+                    for j in range(cols):
+                        x = (j - (cols-1)/2) * spacing
+                        y = (i - (rows-1)/2) * spacing
+                        coordinates.append((x, y))
+            
+            else:  # Hexagon
+                coordinates = [(0, 2), (1.73, 1), (1.73, -1), 
+                              (0, -2), (-1.73, -1), (-1.73, 1)]
+    
+def create_custom_foundation_ui():
+    """UI for creating custom foundations"""
+    st.markdown("### 🛠️ Custom Foundation Designer")
+    
+    col1, col2 = st.columns([1, 1])
+    
+    with col1:
+        st.markdown("#### Foundation Details")
+        
+        custom_id = st.text_input("Foundation ID", value="CUSTOM1", key="custom_id")
+        custom_name = st.text_input("Foundation Name", value="Custom Foundation", key="custom_name")
+        custom_color = st.color_picker("Color", value="#FF00FF", key="custom_color")
+        
+        st.markdown("#### Pile Coordinates")
+        
+        input_method = st.radio("Input Method", ["Table", "Text", "Template"], key="input_method")
+        
+        # ADD THIS: Define spacing for template-based layouts
+        spacing = st.slider("Pile Spacing (m)", 1.0, 5.0, 2.5, 0.1, key="pile_spacing")
+        
+        if input_method == "Table":
+            n_piles = st.number_input("Number of Piles", 2, 50, 4, key="n_piles")
+            
+            # Create coordinate table
+            coords_data = []
+            for i in range(n_piles):
+                coords_data.append({'Pile': f'P{i+1}', 'X': 0.0, 'Y': 0.0})
+            
+            df_coords = pd.DataFrame(coords_data)
+            edited_df = st.data_editor(df_coords, use_container_width=True, key="coords_table")
+            
+            coordinates = [(row['X'], row['Y']) for _, row in edited_df.iterrows()]
+            
+        elif input_method == "Text":
+            coord_text = st.text_area(
+                "Enter coordinates (x,y per line)",
+                value="0,2\n1.73,1\n1.73,-1\n0,-2\n-1.73,-1\n-1.73,1",
+                height=200,
+                key="coord_text"
+            )
+            
+            coordinates = []
+            try:
+                for line in coord_text.strip().split('\n'):
+                    if line.strip():
+                        x, y = map(float, line.split(','))
+                        coordinates.append((x, y))
+            except:
+                st.error("Invalid coordinate format")
+                coordinates = []
+        
+        else:  # Template
+            template = st.selectbox("Select Template", 
+                                   ["Square", "Circle", "Rectangle", "Hexagon"],
+                                   key="template")
+            
+            if template == "Square":
+                n = st.slider("Grid Size", 2, 5, 3, key="square_n")
+                coordinates = []
+                for i in range(n):
+                    for j in range(n):
+                        x = (j - (n-1)/2) * spacing
+                        y = (i - (n-1)/2) * spacing
+                        coordinates.append((x, y))
+            
+            elif template == "Circle":
+                n = st.slider("Number of Piles", 3, 20, 8, key="circle_n")
+                radius = st.slider("Radius", 1.0, 5.0, 2.0, 0.1, key="circle_radius")
+                center = st.checkbox("Include Center", key="circle_center")
+                
                 coordinates = []
                 if center:
                     coordinates.append((0, 0))
