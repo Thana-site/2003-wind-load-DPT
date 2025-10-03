@@ -1283,39 +1283,38 @@ with tab5:
         # Prepare display dataframe
         display_results = results.copy()
         
-        # Replace this section:
+        # Use Load_Combination (full description) instead of Load_Case (code)
         if 'Load_Combination' in display_results.columns:
             display_results['Display_Load'] = display_results['Load_Combination']
         else:
             display_results['Display_Load'] = display_results.get('Load_Case', 'N/A')
         
-        # Update display columns to use the descriptive name:
-        display_cols = ['Node', 'foundation_id', 'n_piles', 'Display_Load',  # This will show the description
+        display_results['Tension_Flag'] = display_results['Has_Tension'].apply(lambda x: '⚠️ TENSION' if x else '✓')
+        
+        # Select and format columns
+        display_cols = ['Node', 'foundation_id', 'n_piles', 'Display_Load',
                        'Fz', 'Mx', 'My', 'Mx_abs', 'My_abs', 
                        'max_pile_load', 'utilization_ratio', 
                        'category', 'is_safe', 'Tension_Flag']
         
-        # When renaming columns, make it clear:
-        display_results_formatted.columns = ['Node', 'Foundation', 'Piles', 'Load Combination',  # Not "Load Case"
-                                             'Fz (tonf)', 'Mx (tonf·m)', 'My (tonf·m)', 
-                                             'Mx Used (tonf·m)', 'My Used (tonf·m)',
-                                             'Max Pile Load (tonf)', 'Utilization', 
-                                             'Category', 'Safe', 'Status']
-                
-        # Format the dataframe for better readability
-        display_results_formatted = display_results[display_cols].copy()
-        display_results_formatted['Fz'] = display_results_formatted['Fz'].apply(lambda x: f"{x:.2f}")
-        display_results_formatted['Mx'] = display_results_formatted['Mx'].apply(lambda x: f"{x:.2f}")
-        display_results_formatted['My'] = display_results_formatted['My'].apply(lambda x: f"{x:.2f}")
-        display_results_formatted['max_pile_load'] = display_results_formatted['max_pile_load'].apply(lambda x: f"{x:.2f}")
-        display_results_formatted['utilization_ratio'] = display_results_formatted['utilization_ratio'].apply(lambda x: f"{x:.1%}")
+        # Create formatted dataframe
+        display_formatted = display_results[display_cols].copy()
+        
+        # Format numeric columns
+        display_formatted['Fz'] = display_formatted['Fz'].apply(lambda x: f"{x:.2f}")
+        display_formatted['Mx'] = display_formatted['Mx'].apply(lambda x: f"{x:.2f}")
+        display_formatted['My'] = display_formatted['My'].apply(lambda x: f"{x:.2f}")
+        display_formatted['Mx_abs'] = display_formatted['Mx_abs'].apply(lambda x: f"{x:.2f}")
+        display_formatted['My_abs'] = display_formatted['My_abs'].apply(lambda x: f"{x:.2f}")
+        display_formatted['max_pile_load'] = display_formatted['max_pile_load'].apply(lambda x: f"{x:.2f}")
+        display_formatted['utilization_ratio'] = display_formatted['utilization_ratio'].apply(lambda x: f"{x:.1%}")
         
         # Rename columns for display
-        display_results_formatted.columns = ['Node', 'Foundation', 'Piles', 'Load Combination',
-                                             'Fz (tonf)', 'Mx (tonf·m)', 'My (tonf·m)', 
-                                             'Mx Used (tonf·m)', 'My Used (tonf·m)',
-                                             'Max Pile Load (tonf)', 'Utilization', 
-                                             'Category', 'Safe', 'Status']
+        display_formatted.columns = ['Node', 'Foundation', 'Piles', 'Load Combination',
+                                     'Fz (tonf)', 'Mx (tonf·m)', 'My (tonf·m)', 
+                                     'Mx Used (tonf·m)', 'My Used (tonf·m)',
+                                     'Max Pile Load (tonf)', 'Utilization', 
+                                     'Category', 'Safe', 'Status']
         
         # Style the dataframe to highlight tension nodes
         def highlight_tension(row):
@@ -1333,7 +1332,7 @@ with tab5:
             else:
                 return [''] * len(row)
         
-        styled_df = display_results_formatted.style.apply(highlight_tension, axis=1)
+        styled_df = display_formatted.style.apply(highlight_tension, axis=1)
         st.dataframe(styled_df, use_container_width=True)
         
         # Legend
