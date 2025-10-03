@@ -526,9 +526,23 @@ def process_analysis(df, selected_nodes, analyzer, target_utilization=0.85):
         Mx = abs(Mx_raw)
         My = abs(My_raw)
         
-        # Get load combination
-        load_case_raw = row.get('Load Combination', row.get('Load Case', f'LC_{idx}'))
-        load_combination = format_load_combination(load_case_raw)
+        # Get load combination - handle both column names
+        if 'Load Combination' in row:
+            load_combo_raw = row['Load Combination']
+            load_case_code = row.get('Load Case', f'LC_{idx}')
+        elif 'Load Case' in row:
+            load_case_code = row['Load Case']
+            load_combo_raw = load_case_code  # Will be formatted below
+        else:
+            load_case_code = f'LC_{idx}'
+            load_combo_raw = f'LC_{idx}'
+        
+        # Format the combination to get descriptive name
+        load_combination = format_load_combination(load_combo_raw)
+        
+        # Store both in results
+        result['Load_Case'] = load_case_code  # The code (e.g., cLCB70)
+        result['Load_Combination'] = load_combination  # The description (e.g., SERV : D + (L))
         
         # Check for manual assignment
         node = row['Node']
@@ -1269,20 +1283,25 @@ with tab5:
         # Prepare display dataframe
         display_results = results.copy()
         
-        # Use Load_Combination (full description) instead of Load_Case (code)
+        # Replace this section:
         if 'Load_Combination' in display_results.columns:
             display_results['Display_Load'] = display_results['Load_Combination']
         else:
             display_results['Display_Load'] = display_results.get('Load_Case', 'N/A')
         
-        display_results['Tension_Flag'] = display_results['Has_Tension'].apply(lambda x: '⚠️ TENSION' if x else '✓')
-        
-        # Updated columns to include Mx and My
-        display_cols = ['Node', 'foundation_id', 'n_piles', 'Display_Load',
+        # Update display columns to use the descriptive name:
+        display_cols = ['Node', 'foundation_id', 'n_piles', 'Display_Load',  # This will show the description
                        'Fz', 'Mx', 'My', 'Mx_abs', 'My_abs', 
                        'max_pile_load', 'utilization_ratio', 
                        'category', 'is_safe', 'Tension_Flag']
         
+        # When renaming columns, make it clear:
+        display_results_formatted.columns = ['Node', 'Foundation', 'Piles', 'Load Combination',  # Not "Load Case"
+                                             'Fz (tonf)', 'Mx (tonf·m)', 'My (tonf·m)', 
+                                             'Mx Used (tonf·m)', 'My Used (tonf·m)',
+                                             'Max Pile Load (tonf)', 'Utilization', 
+                                             'Category', 'Safe', 'Status']
+                
         # Format the dataframe for better readability
         display_results_formatted = display_results[display_cols].copy()
         display_results_formatted['Fz'] = display_results_formatted['Fz'].apply(lambda x: f"{x:.2f}")
@@ -1646,23 +1665,34 @@ with tab7:  # Export tab
             node_data = results_with_criticality[results_with_criticality['Node'] == node]
             critical_row = node_data.loc[node_data['criticality_score'].idxmax()]
             
-            # Extract load case and combination with better handling
+            # Extract load case code (e.g., "cLCB70", "LC_3511")
             load_case_code = str(critical_row.get('Load_Case', 'N/A')).strip()
-            load_combo_desc = str(critical_row.get('Load_Combination', '')).strip()
             
-            # Try to get proper load combination description
-            if not load_combo_desc or load_combo_desc == 'nan' or load_combo_desc == load_case_code:
-                # Try formatting the load case
+            # Extract load combination description with proper fallback logic
+            # Priority: 1) Load_Combination column, 2) Format the code, 3) Session state, 4) Use code
+            load_combo_desc = None
+            
+            # Try Load_Combination column first
+            if 'Load_Combination' in critical_row.index:
+                potential_desc = str(critical_row['Load_Combination']).strip()
+                if potential_desc and potential_desc != 'nan' and potential_desc != load_case_code:
+                    load_combo_desc = potential_desc
+            
+            # Try formatting the code
+            if not load_combo_desc:
                 formatted = format_load_combination(load_case_code)
                 if formatted != load_case_code:
                     load_combo_desc = formatted
-                else:
-                    # Check session state for detected combinations
-                    if 'detected_load_combinations' in st.session_state:
-                        detected = st.session_state.detected_load_combinations
-                        load_combo_desc = detected.get(load_case_code, load_case_code)
-                    else:
-                        load_combo_desc = load_case_code
+            
+            # Try session state detected combinations
+            if not load_combo_desc and 'detected_load_combinations' in st.session_state:
+                detected = st.session_state.detected_load_combinations
+                if load_case_code in detected:
+                    load_combo_desc = detected[load_case_code]
+            
+            # Final fallback: use the code itself
+            if not load_combo_desc:
+                load_combo_desc = load_case_code
             
             critical_summary.append({
                 'Node': int(critical_row['Node']),
@@ -1670,7 +1700,7 @@ with tab7:  # Export tab
                 'Y': float(critical_row.get('Y', 0)),
                 'Z': float(critical_row.get('Z', 0)),
                 'Load_Case_Code': load_case_code,
-                'Critical_Load_Combination': load_combo_desc,
+                'Load_Combination_Name': load_combo_desc,
                 'Foundation_Type': str(critical_row['foundation_id']),
                 'Foundation_Name': str(critical_row['foundation_name']),
                 'Number_of_Piles': int(critical_row['n_piles']),
@@ -1735,7 +1765,7 @@ with tab7:  # Export tab
             unsafe_count = len(critical_df[~critical_df['Is_Safe']])
             st.metric("Unsafe Nodes", unsafe_count)
         
-        # Display table
+        # Display table with LOAD COMBINATION NAMES (not codes)
         st.markdown("#### Critical Load Case Table")
         
         display_critical = critical_df_sorted.copy()
@@ -1747,13 +1777,14 @@ with tab7:  # Export tab
         display_critical['Mx_Display'] = display_critical['Mx_tonfm'].apply(lambda x: f"{x:.2f}")
         display_critical['My_Display'] = display_critical['My_tonfm'].apply(lambda x: f"{x:.2f}")
         
-        display_cols = ['Node', 'Number_of_Piles', 'Foundation_Type', 'Critical_Load_Combination',  # Changed from Load_Case_Code
+        # Use Load_Combination_Name (descriptive) for display
+        display_cols = ['Node', 'Number_of_Piles', 'Foundation_Type', 'Load_Combination_Name',
                        'Criticality_Display', 'Fz_Display', 'Mx_Display', 'My_Display',
                        'Load_Mag_Display', 'Moment_Int_Display', 'Utilization_Display', 
                        'Category', 'Is_Safe']
         
         display_critical_renamed = display_critical[display_cols].copy()
-        display_critical_renamed.columns = ['Node', 'Piles', 'Foundation', 'Critical Load Combination',  # This is correct
+        display_critical_renamed.columns = ['Node', 'Piles', 'Foundation', 'Load Combination',
                                             'Criticality', 'Fz (tonf)', 'Mx (tonf·m)', 'My (tonf·m)',
                                             'Load Mag', 'Moment Int', 'Utilization', 'Category', 'Safe']
         
@@ -1810,7 +1841,7 @@ with tab7:  # Export tab
         col1, col2 = st.columns(2)
         
         with col1:
-            # Comprehensive export with all data
+            # Comprehensive export with BOTH code and descriptive name
             export_critical = critical_df_sorted.copy()
             
             # Round numeric columns for export
@@ -1825,10 +1856,10 @@ with tab7:  # Export tab
             export_critical['Load_Magnitude'] = export_critical['Load_Magnitude'].round(4)
             export_critical['Moment_Intensity'] = export_critical['Moment_Intensity'].round(4)
             
-            # Rename columns for clarity - KEEP BOTH CODE AND DESCRIPTION
+            # Rename columns - KEEP BOTH CODE AND NAME
             export_renamed = export_critical.rename(columns={
-                'Load_Case_Code': 'Load_Case_Code',  # Keep the code
-                'Critical_Load_Combination': 'Critical_Load_Combination',  # Keep the full description
+                'Load_Case_Code': 'Load_Case_Code',
+                'Load_Combination_Name': 'Load_Combination',
                 'Fz_tonf': 'Fz (tonf)',
                 'Mx_tonfm': 'Mx (tonf·m)',
                 'My_tonfm': 'My (tonf·m)',
@@ -1839,7 +1870,6 @@ with tab7:  # Export tab
             
             critical_csv = export_renamed.to_csv(index=False)
             
-            critical_csv = export_renamed.to_csv(index=False)
             st.download_button(
                 "📥 Download Critical Summary (CSV)",
                 data=critical_csv,
@@ -1849,9 +1879,9 @@ with tab7:  # Export tab
             )
         
         with col2:
-            # Simplified report for quick review
+            # Simplified report - SHOW DESCRIPTIVE NAME ONLY
             simplified_export = critical_df_sorted[[
-                'Node', 'Critical_Load_Combination',  # Changed from Load_Case_Code - use full description
+                'Node', 'Load_Combination_Name',
                 'Foundation_Type', 'Number_of_Piles',
                 'Fz_tonf', 'Mx_tonfm', 'My_tonfm', 
                 'Max_Pile_Load_tonf', 'Utilization_Ratio',
@@ -1865,9 +1895,9 @@ with tab7:  # Export tab
             simplified_export['Max_Pile_Load_tonf'] = simplified_export['Max_Pile_Load_tonf'].round(2)
             simplified_export['Utilization_Ratio'] = simplified_export['Utilization_Ratio'].round(4)
             
-            simplified_export.columns = ['Node', 'Critical_Load_Combination', 'Foundation',  # Changed column name
+            simplified_export.columns = ['Node', 'Load Combination', 'Foundation',
                                         'Piles', 'Fz (tonf)', 'Mx (tonf·m)', 'My (tonf·m)',
-                                        'Max_Pile_Load (tonf)', 'Utilization', 'Category', 'Safe']
+                                        'Max_pile_Load (tonf)', 'Utilization', 'Category', 'Safe']
             
             simplified_csv = simplified_export.to_csv(index=False)
             st.download_button(
@@ -1885,7 +1915,7 @@ with tab7:  # Export tab
         col1, col2 = st.columns(2)
         
         with col1:
-            # Export all load cases
+            # Export all load cases with DESCRIPTIVE NAMES
             complete_export = results_with_criticality[[
                 'Node', 'X', 'Y', 'Z', 'Load_Case', 'Load_Combination',
                 'foundation_id', 'foundation_name', 'n_piles',
@@ -1916,7 +1946,7 @@ with tab7:  # Export tab
                     use_container_width=True
                 )
         
-        # Comprehensive report
+        # Comprehensive report with DESCRIPTIVE NAMES
         st.markdown("---")
         st.markdown("### 📄 Comprehensive Analysis Report")
         
@@ -1945,7 +1975,6 @@ Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 - **Moment Intensity Weight:** {w_moment:.2f}
 - **Pile Count Weight:** {w_piles:.2f}
 
-### Scoring Methodology
 ---
 
 ## 2. EXECUTIVE SUMMARY
@@ -1970,7 +1999,7 @@ Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 - **Foundation Type:** {critical_df.loc[most_critical_idx, 'Foundation_Type']} - {critical_df.loc[most_critical_idx, 'Foundation_Name']}
 - **Number of Piles:** {int(critical_df.loc[most_critical_idx, 'Number_of_Piles'])}
 - **Load Case Code:** {critical_df.loc[most_critical_idx, 'Load_Case_Code']}
-- **Load Combination:** {critical_df.loc[most_critical_idx, 'Critical_Load_Combination']}
+- **Load Combination:** {critical_df.loc[most_critical_idx, 'Load_Combination_Name']}
 - **Applied Loads:**
   - Fz = {critical_df.loc[most_critical_idx, 'Fz_tonf']:.2f} tonf
   - Mx = {critical_df.loc[most_critical_idx, 'Mx_tonfm']:.2f} tonf·m
@@ -1983,7 +2012,7 @@ Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 **Node {int(critical_df.loc[most_piles_idx, 'Node'])}:**
 - **Number of Piles:** {int(critical_df.loc[most_piles_idx, 'Number_of_Piles'])}
 - **Foundation Type:** {critical_df.loc[most_piles_idx, 'Foundation_Type']} - {critical_df.loc[most_piles_idx, 'Foundation_Name']}
-- **Load Combination:** {critical_df.loc[most_piles_idx, 'Critical_Load_Combination']}
+- **Load Combination:** {critical_df.loc[most_piles_idx, 'Load_Combination_Name']}
 - **Utilization Ratio:** {critical_df.loc[most_piles_idx, 'Utilization_Ratio']:.1%}
 - **Criticality Score:** {critical_df.loc[most_piles_idx, 'Criticality_Score']:.3f}
 - **Max Pile Load:** {critical_df.loc[most_piles_idx, 'Max_Pile_Load_tonf']:.2f} tonf
@@ -1993,7 +2022,7 @@ Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 - **Utilization Ratio:** {critical_df.loc[highest_util_idx, 'Utilization_Ratio']:.1%}
 - **Foundation Type:** {critical_df.loc[highest_util_idx, 'Foundation_Type']} - {critical_df.loc[highest_util_idx, 'Foundation_Name']}
 - **Number of Piles:** {int(critical_df.loc[highest_util_idx, 'Number_of_Piles'])}
-- **Load Combination:** {critical_df.loc[highest_util_idx, 'Critical_Load_Combination']}
+- **Load Combination:** {critical_df.loc[highest_util_idx, 'Load_Combination_Name']}
 - **Max Pile Load:** {critical_df.loc[highest_util_idx, 'Max_Pile_Load_tonf']:.2f} tonf (Capacity: {pile_capacity} tonf)
 - **Status:** {'✅ SAFE' if critical_df.loc[highest_util_idx, 'Is_Safe'] else '❌ UNSAFE - OVER CAPACITY'}
 
@@ -2009,8 +2038,8 @@ Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 ### Rank {rank}: Node {int(row['Node'])} (Criticality: {row['Criticality_Score']:.3f})
 - **Foundation:** {row['Foundation_Type']} - {row['Foundation_Name']} ({row['Number_of_Piles']} piles)
 - **Location:** X={row['X']:.2f}m, Y={row['Y']:.2f}m, Z={row['Z']:.2f}m
-- **Load Case:** {row['Load_Case_Code']}
-- **Load Combination:** {row['Critical_Load_Combination']}
+- **Load Case Code:** {row['Load_Case_Code']}
+- **Load Combination:** {row['Load_Combination_Name']}
 - **Applied Loads:** Fz={row['Fz_tonf']:.2f} tonf, Mx={row['Mx_tonfm']:.2f} tonf·m, My={row['My_tonfm']:.2f} tonf·m
 - **Max Pile Load:** {row['Max_Pile_Load_tonf']:.2f} tonf
 - **Utilization:** {row['Utilization_Ratio']:.1%}
@@ -2059,7 +2088,7 @@ Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
             report += f"### 6.1 High Criticality Nodes (Score > 0.8)\n"
             report += f"**{len(high_crit)} nodes require special attention:**\n\n"
             for _, row in high_crit.iterrows():
-                report += f"- **Node {int(row['Node'])}:** Criticality={row['Criticality_Score']:.3f}, Utilization={row['Utilization_Ratio']:.1%}, Load: {row['Critical_Load_Combination']}\n"
+                report += f"- **Node {int(row['Node'])}:** Criticality={row['Criticality_Score']:.3f}, Utilization={row['Utilization_Ratio']:.1%}, Load: {row['Load_Combination_Name']}\n"
             report += "\n"
         
         # Unsafe designs
@@ -2069,7 +2098,7 @@ Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
             report += f"**{len(unsafe_nodes)} nodes exceed pile capacity:**\n\n"
             for _, row in unsafe_nodes.iterrows():
                 report += f"- **Node {int(row['Node'])}:** {row['Utilization_Ratio']:.1%} utilization ({row['Foundation_Type']}, {row['Number_of_Piles']} piles)\n"
-                report += f"  - Load: {row['Critical_Load_Combination']}\n"
+                report += f"  - Load Combination: {row['Load_Combination_Name']}\n"
                 report += f"  - Max Pile Load: {row['Max_Pile_Load_tonf']:.2f} tonf (Capacity: {pile_capacity} tonf)\n"
             report += "\n**Recommendation:** Increase pile capacity or add more piles to these foundations.\n\n"
         
@@ -2108,6 +2137,7 @@ Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
         report += "\n---\n\n"
         report += "**Report prepared by:** Advanced Pile Foundation Analysis Tool\n"
         report += f"**Analysis Date:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+        report += "\n**Note:** All load combinations shown are descriptive names (e.g., SERV : D + (L)) for engineering clarity.\n"
         
         st.download_button(
             "📥 Download Comprehensive Report (Markdown)",
@@ -2117,7 +2147,7 @@ Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
             use_container_width=True
         )
         
-        st.success("✅ Export ready! All files include complete load combination descriptions and multi-factor criticality assessment.")
+        st.success("✅ Export ready! All files display descriptive load combination names instead of codes.")
     
     else:
         st.info("⚠️ No results to export. Please run analysis first in Tab 3: Data & Analysis.")
