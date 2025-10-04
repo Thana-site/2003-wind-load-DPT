@@ -449,12 +449,11 @@ def get_load_combination_name(code):
         if code in lookup:
             return lookup[code]
     
-    # Fallback to format_load_combination
-    formatted = format_load_combination(code)
-    if formatted != code:
-        return formatted
+    # Fallback to default LOAD_COMBINATIONS
+    if code in LOAD_COMBINATIONS:
+        return LOAD_COMBINATIONS[code]
     
-    # Last resort: return the code itself
+    # Last resort: return the code itself if no mapping found
     return code
 
 def extract_load_combinations_from_csv(df):
@@ -497,28 +496,8 @@ def sort_load_cases(load_case):
     return 0
     
 def format_load_combination(load_case):
-    """Convert load case code to readable combination"""
-    # First check session state for detected combinations
-    if 'detected_load_combinations' in st.session_state:
-        detected = st.session_state.detected_load_combinations
-        if load_case in detected:
-            return detected[load_case]
-    
-    # Fall back to default LOAD_COMBINATIONS
-    if isinstance(load_case, str):
-        # Check if it matches a known pattern
-        for pattern, combination in LOAD_COMBINATIONS.items():
-            if pattern.lower() in load_case.lower():
-                return combination
-        
-        # Try to extract number from load case
-        match = re.search(r'(\d+)', load_case)
-        if match:
-            case_num = f"cLCB{match.group(1)}"
-            if case_num in LOAD_COMBINATIONS:
-                return LOAD_COMBINATIONS[case_num]
-    
-    return load_case  # Return original if no match
+    """Convert load case code to readable combination - DEPRECATED, use get_load_combination_name instead"""
+    return get_load_combination_name(load_case)
 
 def load_csv_file(uploaded_file):
     """Load CSV file with multiple encoding attempts"""
@@ -551,10 +530,14 @@ def check_tension_nodes(df):
         return tension_nodes
     
     for _, row in tension_df.iterrows():
+        # Get the descriptive load combination name
+        load_case_code = row.get('Load Case', 'Unknown')
+        load_combo_name = row.get('Load Combination', get_load_combination_name(load_case_code))
+        
         tension_nodes.append({
             'Node': row['Node'],
             'Fz': row[fz_col],
-            'Load_Case': row.get('Load Combination', row.get('Load Case', 'Unknown'))
+            'Load_Combination': load_combo_name  # Use descriptive name
         })
     
     return tension_nodes
@@ -587,24 +570,35 @@ def process_analysis(df, selected_nodes, analyzer, target_utilization=0.85):
         Mx = abs(Mx_raw)
         My = abs(My_raw)
         
-        # ===== SIMPLIFIED: Just get the code, lookup handles the rest =====
+        # FIXED: Extract both code and descriptive name from CSV directly
         load_case_code = None
+        load_combination_name = None
         
+        # First try to get the code from Load Case column
         if 'Load Case' in row.index and pd.notna(row['Load Case']):
             load_case_code = str(row['Load Case']).strip()
-        elif 'Load Combination' in row.index and pd.notna(row['Load Combination']):
-            # Try to extract code from combination column
-            raw = str(row['Load Combination']).strip()
-            match = re.search(r'(cLCB\d+|LC_?\d+)', raw)
+        
+        # Then try to get the descriptive name from Load Combination column
+        if 'Load Combination' in row.index and pd.notna(row['Load Combination']):
+            load_combination_name = str(row['Load Combination']).strip()
+        
+        # If we don't have a descriptive name but have a code, look it up
+        if not load_combination_name or load_combination_name == 'nan':
+            if load_case_code and load_case_code != 'nan':
+                load_combination_name = get_load_combination_name(load_case_code)
+            else:
+                # Last resort - use row index with proper lookup
+                load_case_code = f'Row_{idx}'
+                load_combination_name = f'Unknown Load Case (Row {idx})'
+        
+        # If we don't have a code, try to extract it from the combination name
+        if not load_case_code or load_case_code == 'nan':
+            # Try to extract code pattern from combination if possible
+            match = re.search(r'(cLCB\d+|LC_?\d+)', str(load_combination_name))
             if match:
                 load_case_code = match.group(1)
             else:
-                load_case_code = raw
-        else:
-            load_case_code = f'LC_{idx}'
-        
-        # Use the lookup to get descriptive name
-        load_combination_name = get_load_combination_name(load_case_code)
+                load_case_code = f'Row_{idx}'
         
         # Check for manual assignment
         node = row['Node']
@@ -675,97 +669,7 @@ def create_custom_foundation_ui():
         
         input_method = st.radio("Input Method", ["Table", "Text", "Template"], key="input_method")
         
-        if input_method == "Table":
-            n_piles = st.number_input("Number of Piles", 2, 50, 4, key="n_piles")
-            
-            # Create coordinate table
-            coords_data = []
-            for i in range(n_piles):
-                coords_data.append({'Pile': f'P{i+1}', 'X': 0.0, 'Y': 0.0})
-            
-            df_coords = pd.DataFrame(coords_data)
-            edited_df = st.data_editor(df_coords, use_container_width=True, key="coords_table")
-            
-            coordinates = [(row['X'], row['Y']) for _, row in edited_df.iterrows()]
-            
-        elif input_method == "Text":
-            coord_text = st.text_area(
-                "Enter coordinates (x,y per line)",
-                value="0,2\n1.73,1\n1.73,-1\n0,-2\n-1.73,-1\n-1.73,1",
-                height=200,
-                key="coord_text"
-            )
-            
-            coordinates = []
-            try:
-                for line in coord_text.strip().split('\n'):
-                    if line.strip():
-                        x, y = map(float, line.split(','))
-                        coordinates.append((x, y))
-            except:
-                st.error("Invalid coordinate format")
-                coordinates = []
-        
-        else:  # Template
-            template = st.selectbox("Select Template", 
-                                   ["Square", "Circle", "Rectangle", "Hexagon"],
-                                   key="template")
-            
-            if template == "Square":
-                n = st.slider("Grid Size", 2, 5, 3, key="square_n")
-                coordinates = []
-                for i in range(n):
-                    for j in range(n):
-                        x = (j - (n-1)/2) * spacing
-                        y = (i - (n-1)/2) * spacing
-                        coordinates.append((x, y))
-            
-            elif template == "Circle":
-                n = st.slider("Number of Piles", 3, 20, 8, key="circle_n")
-                radius = st.slider("Radius", 1.0, 5.0, 2.0, 0.1, key="circle_radius")
-                center = st.checkbox("Include Center", key="circle_center")             
-                coordinates = []
-                if center:
-                    coordinates.append((0, 0))
-                for i in range(n):
-                    angle = 2 * np.pi * i / n
-                    x = radius * np.cos(angle)
-                    y = radius * np.sin(angle)
-                    coordinates.append((round(x, 2), round(y, 2)))
-            
-            elif template == "Rectangle":
-                rows = st.slider("Rows", 2, 6, 3, key="rect_rows")
-                cols = st.slider("Columns", 2, 6, 3, key="rect_cols")
-                
-                coordinates = []
-                for i in range(rows):
-                    for j in range(cols):
-                        x = (j - (cols-1)/2) * spacing
-                        y = (i - (rows-1)/2) * spacing
-                        coordinates.append((x, y))
-            
-            else:  # Hexagon
-                coordinates = [(0, 2), (1.73, 1), (1.73, -1), 
-                              (0, -2), (-1.73, -1), (-1.73, 1)]
-    
-def create_custom_foundation_ui():
-    """UI for creating custom foundations"""
-    st.markdown("### 🛠️ Custom Foundation Designer")
-    
-    col1, col2 = st.columns([1, 1])
-    
-    with col1:
-        st.markdown("#### Foundation Details")
-        
-        custom_id = st.text_input("Foundation ID", value="CUSTOM1", key="custom_id")
-        custom_name = st.text_input("Foundation Name", value="Custom Foundation", key="custom_name")
-        custom_color = st.color_picker("Color", value="#FF00FF", key="custom_color")
-        
-        st.markdown("#### Pile Coordinates")
-        
-        input_method = st.radio("Input Method", ["Table", "Text", "Template"], key="input_method")
-        
-        # ADD THIS: Define spacing for template-based layouts
+        # Define spacing for template-based layouts
         spacing = st.slider("Pile Spacing (m)", 1.0, 5.0, 2.5, 0.1, key="pile_spacing")
         
         if input_method == "Table":
@@ -1020,7 +924,7 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
     "📊 Data & Analysis",
     "🔍 Foundation Properties",
     "📈 Results & Visualization",
-    "🗺️ Site Plan & Foundation Map",  # NEW TAB
+    "🗺️ Site Plan & Foundation Map",
     "💾 Export"
 ])
 
@@ -1132,7 +1036,7 @@ with tab3:
         if df is not None:
             st.success(message)
             
-            # ===== CREATE MASTER LOAD COMBINATION LOOKUP =====
+            # Create master load combination lookup
             lookup, found = create_load_combination_lookup(df)
             
             if found:
@@ -1147,28 +1051,6 @@ with tab3:
             else:
                 st.info("Using default load combination patterns")
             
-            # ===== ADD DEBUG SECTION HERE =====
-            st.markdown("---")
-            if st.checkbox("🐛 Show Load Combination Lookup Debug"):
-                if 'load_combination_lookup' in st.session_state:
-                    st.write("**Current Lookup Dictionary:**")
-                    st.json(st.session_state.load_combination_lookup)
-                    
-                    st.write(f"**Total entries:** {len(st.session_state.load_combination_lookup)}")
-                    
-                    # Show a test lookup
-                    st.write("**Test Lookup:**")
-                    test_code = st.text_input("Enter a load case code to test (e.g., LC_3511, cLCB70)")
-                    if test_code:
-                        result = get_load_combination_name(test_code)
-                        if result == test_code:
-                            st.warning(f"❌ No mapping found for '{test_code}' - showing code as-is")
-                        else:
-                            st.success(f"✅ '{test_code}' → '{result}'")
-                else:
-                    st.warning("Lookup not created yet - upload CSV first")
-            st.markdown("---")
-            
             # Data overview
             col1, col2, col3, col4 = st.columns(4)
             with col1:
@@ -1180,94 +1062,6 @@ with tab3:
             with col4:
                 total_foundations = len(DEFAULT_FOUNDATIONS) + len(st.session_state.custom_foundations)
                 st.metric("Available Foundations", total_foundations)
-            
-            # Auto-detect load combinations
-            st.markdown("### 🔍 Load Combination Detection")
-            
-            detected_combos, case_col, combo_col, found = extract_load_combinations_from_csv(df)
-            
-            if found:
-                st.success(f"✅ Detected {len(detected_combos)} load combinations from columns: '{case_col}' and '{combo_col}'")
-                
-                # Show detected combinations in expandable section
-                with st.expander(f"View Detected Load Combinations ({len(detected_combos)} total)", expanded=False):
-                    # Create display dataframe with sorted load cases
-                    sorted_cases = sorted(detected_combos.items(), key=lambda x: sort_load_cases(x[0]))
-                    
-                    combo_display = pd.DataFrame([
-                        {'Load Case': case, 'Load Combination': combo}
-                        for case, combo in sorted_cases
-                    ])
-                    
-                    st.dataframe(combo_display, use_container_width=True, height=400)
-                    
-                    # Show statistics
-                    col1, col2, col3 = st.columns(3)
-                    with col1:
-                        lrfd_count = sum(1 for case in detected_combos.keys() if not 'SERV' in detected_combos[case])
-                        st.metric("LRFD Combinations", lrfd_count)
-                    with col2:
-                        serv_count = sum(1 for case in detected_combos.keys() if 'SERV' in detected_combos[case])
-                        st.metric("Serviceability Combinations", serv_count)
-                    with col3:
-                        st.metric("Total Combinations", len(detected_combos))
-                    
-                    # Option to export detected combinations
-                    combo_json = json.dumps(detected_combos, indent=2, sort_keys=True)
-                    st.download_button(
-                        "📥 Export Load Combinations (JSON)",
-                        data=combo_json,
-                        file_name=f"load_combinations_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
-                        mime="application/json"
-                    )
-                # Update global LOAD_COMBINATIONS dictionary with detected values
-                if st.button("✅ Use Detected Load Combinations", type="primary"):
-                    # Merge with existing combinations (detected takes priority)
-                    LOAD_COMBINATIONS.update(detected_combos)
-                    st.session_state.detected_load_combinations = detected_combos
-                    st.success(f"Load combinations updated! Now using {len(detected_combos)} combinations from your file.")
-                    st.rerun()
-                
-                # Store in session state for use in analysis
-                st.session_state.detected_load_combinations = detected_combos
-                
-            else:
-                st.warning("⚠️ Could not auto-detect load combination columns. Looking for columns named 'Load Case' and 'Load Combination'.")
-                st.info("Expected column names: 'Load Case' (e.g., cLCB70) and 'Load Combination' (e.g., SERV :D + (L))")
-                
-                # Show available columns
-                st.write("**Available columns in your file:**")
-                st.write(", ".join(df.columns.tolist()))
-                
-                # Manual column selection fallback
-                st.markdown("#### Manual Column Selection")
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    manual_case_col = st.selectbox("Select Load Case Column", options=[''] + df.columns.tolist())
-                
-                with col2:
-                    manual_combo_col = st.selectbox("Select Load Combination Column", options=[''] + df.columns.tolist())
-                
-                if manual_case_col and manual_combo_col:
-                    if st.button("Extract Load Combinations"):
-                        # Manual extraction
-                        manual_combos = {}
-                        unique_combos = df[[manual_case_col, manual_combo_col]].drop_duplicates()
-                        
-                        for _, row in unique_combos.iterrows():
-                            case = str(row[manual_case_col]).strip()
-                            combination = str(row[manual_combo_col]).strip()
-                            if case and combination and case != 'nan' and combination != 'nan':
-                                manual_combos[case] = combination
-                        
-                        if manual_combos:
-                            st.success(f"✅ Extracted {len(manual_combos)} load combinations!")
-                            st.session_state.detected_load_combinations = manual_combos
-                            LOAD_COMBINATIONS.update(manual_combos)
-                            st.rerun()
-                        else:
-                            st.error("No valid combinations found in selected columns")
             
             # Preview data
             with st.expander("Preview Data", expanded=False):
@@ -1372,10 +1166,7 @@ with tab4:
                     st.write(f"• P (Fz) = {example_node['Fz']:.2f} tonf")
                     st.write(f"• Mx = {example_node['Mx']:.2f} tonf·m")
                     st.write(f"• My = {example_node['My']:.2f} tonf·m")
-                    if 'Load_Combination' in example_node:
-                        st.write(f"• Load Combination: **{example_node['Load_Combination']}**")
-                    else:
-                        st.write(f"• Load Case: **{example_node.get('Load_Case', 'N/A')}**")
+                    st.write(f"• Load Combination: **{example_node['Load_Combination']}**")
                 
                 with col2:
                     st.markdown("**Stress Components:**")
@@ -1471,17 +1262,13 @@ with tab5:
             st.metric("Total Piles", int(total_piles))
         
         # Results table with critical load combination
-        st.subheader("Analysis Results - Critical Load Combinations")
+        st.subheader("Analysis Results - All Load Combinations")
         
         # Prepare display dataframe
         display_results = results.copy()
         
-        # Use Load_Combination (full description) instead of Load_Case (code)
-        if 'Load_Combination' in display_results.columns:
-            display_results['Display_Load'] = display_results['Load_Combination']
-        else:
-            display_results['Display_Load'] = display_results.get('Load_Case', 'N/A')
-        
+        # Use descriptive Load_Combination instead of Load_Case codes
+        display_results['Display_Load'] = display_results['Load_Combination']
         display_results['Tension_Flag'] = display_results['Has_Tension'].apply(lambda x: '⚠️ TENSION' if x else '✓')
         
         # Select and format columns
@@ -1509,8 +1296,8 @@ with tab5:
                                      'Max Pile Load (tonf)', 'Utilization', 
                                      'Category', 'Safe', 'Status']
         
-        # Style the dataframe to highlight tension nodes
-        def highlight_tension(row):
+        # Style the dataframe
+        def highlight_conditions(row):
             idx = row.name
             has_tension = display_results.loc[idx, 'Has_Tension']
             is_safe = display_results.loc[idx, 'is_safe']
@@ -1525,7 +1312,7 @@ with tab5:
             else:
                 return [''] * len(row)
         
-        styled_df = display_formatted.style.apply(highlight_tension, axis=1)
+        styled_df = display_formatted.style.apply(highlight_conditions, axis=1)
         st.dataframe(styled_df, use_container_width=True)
         
         # Legend
@@ -1685,7 +1472,7 @@ with tab6:
                     - **Number of Piles:** {int(node_data['n_piles'])}
                     - **Location:** ({node_data['X']:.2f}, {node_data['Y']:.2f})
                     - **Utilization:** {node_data['utilization_ratio']:.1%}
-                    - **Load Combination:** {node_data.get('Display_Load', node_data.get('Load_Combination', 'N/A'))}
+                    - **Load Combination:** {node_data['Load_Combination']}
                     - **Max Pile Load:** {node_data['max_pile_load']:.2f} tonf
                     - **Category:** {node_data['category']}
                     - **Status:** {'✅ Safe' if node_data['is_safe'] else '❌ Over-capacity'}
@@ -1774,14 +1561,13 @@ with tab6:
     else:
         st.info("Run analysis first to view site plan and foundation locations")
 
-
 with tab7:  # Export tab
     st.markdown('<h2 class="section-header">💾 Export Results</h2>', unsafe_allow_html=True)
     
     if st.session_state.final_results is not None:
         results = st.session_state.final_results
         
-        # ========== CRITICAL LOAD SELECTION WITH MULTI-FACTOR SCORING ==========
+        # Critical Load Selection with Multi-Factor Scoring
         st.markdown("### 📊 Critical Load Case Summary by Node")
         st.markdown("Multi-factor criticality analysis considering forces, moments, utilization, and foundation size")
         
@@ -1851,22 +1637,21 @@ with tab7:  # Export tab
         )
         
         # Find critical load case per node based on criticality score
-        # Find critical load case per node based on criticality score
         critical_summary = []
         
         for node in results_with_criticality['Node'].unique():
             node_data = results_with_criticality[results_with_criticality['Node'] == node]
             critical_row = node_data.loc[node_data['criticality_score'].idxmax()]
             
-            # Simply extract the stored values - lookup already happened in process_analysis
+            # Use the descriptive Load_Combination that was already extracted
             load_case_code = str(critical_row.get('Load_Case', 'N/A')).strip()
             load_combo_name = str(critical_row.get('Load_Combination', 'N/A')).strip()
             
             # Clean up 'nan' values
-            if load_case_code == 'nan':
+            if load_case_code == 'nan' or not load_case_code:
                 load_case_code = 'N/A'
             if load_combo_name == 'nan' or not load_combo_name:
-                load_combo_name = get_load_combination_name(load_case_code)  # Try lookup again
+                load_combo_name = 'N/A'
             
             critical_summary.append({
                 'Node': int(critical_row['Node']),
@@ -1986,28 +1771,6 @@ with tab7:  # Export tab
         - Red: Unsafe (utilization > 100%)
         """)
         
-        # Foundation distribution summary
-        st.markdown("---")
-        st.markdown("#### Foundation Distribution Summary")
-        
-        foundation_dist = critical_df_sorted.groupby(['Foundation_Type', 'Number_of_Piles']).agg({
-            'Node': 'count',
-            'Utilization_Ratio': 'mean',
-            'Criticality_Score': 'mean'
-        }).reset_index()
-        
-        foundation_dist.columns = ['Foundation Type', 'Piles/Foundation', 'Node Count', 
-                                   'Avg Utilization', 'Avg Criticality']
-        foundation_dist['Total Piles'] = foundation_dist['Piles/Foundation'] * foundation_dist['Node Count']
-        foundation_dist['Avg Utilization'] = foundation_dist['Avg Utilization'].apply(lambda x: f"{x:.1%}")
-        foundation_dist['Avg Criticality'] = foundation_dist['Avg Criticality'].apply(lambda x: f"{x:.3f}")
-        foundation_dist = foundation_dist.sort_values('Piles/Foundation', ascending=False)
-        
-        st.dataframe(foundation_dist, use_container_width=True, hide_index=True)
-        
-        total_piles_required = foundation_dist['Total Piles'].sum()
-        st.metric("Total Piles Required for All Nodes", f"{int(total_piles_required)} piles")
-        
         # Export options
         st.markdown("---")
         st.markdown("#### Export Critical Summary")
@@ -2015,7 +1778,7 @@ with tab7:  # Export tab
         col1, col2 = st.columns(2)
         
         with col1:
-            # Comprehensive export with BOTH code and descriptive name
+            # Comprehensive export with both code and descriptive name
             export_critical = critical_df_sorted.copy()
             
             # Round numeric columns for export
@@ -2030,19 +1793,7 @@ with tab7:  # Export tab
             export_critical['Load_Magnitude'] = export_critical['Load_Magnitude'].round(4)
             export_critical['Moment_Intensity'] = export_critical['Moment_Intensity'].round(4)
             
-            # Rename columns - KEEP BOTH CODE AND NAME
-            export_renamed = export_critical.rename(columns={
-                'Load_Case_Code': 'Load_Case_Code',
-                'Load_Combination_Name': 'Load_Combination',
-                'Fz_tonf': 'Fz (tonf)',
-                'Mx_tonfm': 'Mx (tonf·m)',
-                'My_tonfm': 'My (tonf·m)',
-                'Mx_abs_tonfm': 'Mx_abs (tonf·m)',
-                'My_abs_tonfm': 'My_abs (tonf·m)',
-                'Max_Pile_Load_tonf': 'Max_Pile_Load (tonf)'
-            })
-            
-            critical_csv = export_renamed.to_csv(index=False)
+            critical_csv = export_critical.to_csv(index=False)
             
             st.download_button(
                 "📥 Download Critical Summary (CSV)",
@@ -2071,260 +1822,142 @@ with tab7:  # Export tab
             
             simplified_export.columns = ['Node', 'Load Combination', 'Foundation',
                                         'Piles', 'Fz (tonf)', 'Mx (tonf·m)', 'My (tonf·m)',
-                                        'Max_pile_Load (tonf)', 'Utilization', 'Category', 'Safe']
+                                        'Max_Pile_Load (tonf)', 'Utilization', 'Category', 'Safe']
             
             simplified_csv = simplified_export.to_csv(index=False)
             st.download_button(
                 "📥 Download Simplified Report (CSV)",
                 data=simplified_csv,
-                file_name=f"foundation_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                file_name=f"foundation_simplified_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
                 mime="text/csv",
                 use_container_width=True
             )
         
-        # Complete results with all load cases
+        # Full detailed results export
         st.markdown("---")
-        st.markdown("### Complete Analysis (All Load Cases)")
+        st.markdown("#### Export Complete Analysis Results")
         
         col1, col2 = st.columns(2)
         
         with col1:
-            # Export all load cases with DESCRIPTIVE NAMES
-            complete_export = results_with_criticality[[
-                'Node', 'X', 'Y', 'Z', 'Load_Case', 'Load_Combination',
+            # All load cases export - using descriptive names
+            all_results_export = results.copy()
+            
+            # Round numeric columns
+            numeric_cols = ['Fz', 'Mx', 'My', 'Mx_abs', 'My_abs', 
+                           'max_pile_load', 'utilization_ratio',
+                           'axial_stress', 'moment_stress_mx', 'moment_stress_my']
+            
+            for col in numeric_cols:
+                if col in all_results_export.columns:
+                    all_results_export[col] = all_results_export[col].round(3)
+            
+            # Rename columns for export
+            all_results_export_renamed = all_results_export[[
+                'Node', 'X', 'Y', 'Z', 
+                'Load_Case', 'Load_Combination',
                 'foundation_id', 'foundation_name', 'n_piles',
                 'Fz', 'Mx', 'My', 'Mx_abs', 'My_abs',
-                'max_pile_load', 'utilization_ratio', 
-                'criticality_score', 'load_magnitude', 'moment_intensity',
+                'axial_stress', 'moment_stress_mx', 'moment_stress_my',
+                'max_pile_load', 'min_pile_load', 'utilization_ratio',
                 'category', 'is_safe', 'Has_Tension'
             ]].copy()
             
-            complete_csv = complete_export.to_csv(index=False)
+            all_results_export_renamed.columns = [
+                'Node', 'X (m)', 'Y (m)', 'Z (m)',
+                'Load Case Code', 'Load Combination',
+                'Foundation ID', 'Foundation Name', 'Number of Piles',
+                'Fz (tonf)', 'Mx (tonf·m)', 'My (tonf·m)',
+                'Mx Used (tonf·m)', 'My Used (tonf·m)',
+                'Axial Stress (tonf)', 'Moment Stress Mx (tonf)', 'Moment Stress My (tonf)',
+                'Max Pile Load (tonf)', 'Min Pile Load (tonf)', 'Utilization Ratio',
+                'Category', 'Safe', 'Has Tension'
+            ]
+            
+            all_csv = all_results_export_renamed.to_csv(index=False)
             
             st.download_button(
-                "📥 Download All Load Cases (CSV)",
-                data=complete_csv,
-                file_name=f"all_load_cases_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                "📥 Download All Results (CSV)",
+                data=all_csv,
+                file_name=f"all_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
                 mime="text/csv",
                 use_container_width=True
             )
         
         with col2:
-            if st.session_state.foundation_properties:
-                props_json = json.dumps(st.session_state.foundation_properties, indent=2)
-                st.download_button(
-                    "📥 Export Foundation Properties (JSON)",
-                    data=props_json,
-                    file_name=f"foundation_properties_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
-                    mime="application/json",
-                    use_container_width=True
-                )
-        
-        # Comprehensive report with DESCRIPTIVE NAMES
-        st.markdown("---")
-        st.markdown("### 📄 Comprehensive Analysis Report")
-        
-        # Get critical nodes info
-        most_critical_idx = critical_df['Criticality_Score'].idxmax()
-        most_piles_idx = critical_df['Number_of_Piles'].idxmax()
-        highest_util_idx = critical_df['Utilization_Ratio'].idxmax()
-        
-        report = f"""# Pile Foundation Analysis Report
-
-
-        
-## Multi-Factor Criticality Assessment
-
-Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-
----
-
-## 1. CONFIGURATION
-
-### Design Parameters
-- **Pile Diameter:** {pile_diameter} m
-- **Pile Capacity:** {pile_capacity} tonf
-- **Target Utilization:** {target_utilization:.0%}
-
-### Criticality Scoring Weights (Normalized)
-- **Utilization Ratio Weight:** {w_util:.2f}
-- **Load Magnitude Weight:** {w_load:.2f}
-- **Moment Intensity Weight:** {w_moment:.2f}
-- **Pile Count Weight:** {w_piles:.2f}
-
----
-
-## 2. EXECUTIVE SUMMARY
-
-### Overall Statistics
-- **Total Nodes Analyzed:** {len(critical_df)}
-- **Total Piles Required:** {int(critical_df['Number_of_Piles'].sum())} piles
-- **Average Piles per Node:** {critical_df['Number_of_Piles'].mean():.1f} piles
-- **Average Criticality Score:** {critical_df['Criticality_Score'].mean():.3f}
-- **Average Utilization:** {critical_df['Utilization_Ratio'].mean():.1%}
-- **Safe Designs:** {len(critical_df[critical_df['Is_Safe']])} / {len(critical_df)} ({len(critical_df[critical_df['Is_Safe']])/len(critical_df)*100:.1f}%)
-- **Unsafe Designs:** {len(critical_df[~critical_df['Is_Safe']])} nodes
-
----
-
-## 3. CRITICAL NODES ANALYSIS
-
-### 3.1 MOST CRITICAL NODE (Highest Criticality Score)
-**Node {int(critical_df.loc[most_critical_idx, 'Node'])}:**
-- **Location:** X={critical_df.loc[most_critical_idx, 'X']:.2f}m, Y={critical_df.loc[most_critical_idx, 'Y']:.2f}m, Z={critical_df.loc[most_critical_idx, 'Z']:.2f}m
-- **Criticality Score:** {critical_df.loc[most_critical_idx, 'Criticality_Score']:.3f}
-- **Foundation Type:** {critical_df.loc[most_critical_idx, 'Foundation_Type']} - {critical_df.loc[most_critical_idx, 'Foundation_Name']}
-- **Number of Piles:** {int(critical_df.loc[most_critical_idx, 'Number_of_Piles'])}
-- **Load Case Code:** {critical_df.loc[most_critical_idx, 'Load_Case_Code']}
-- **Load Combination:** {critical_df.loc[most_critical_idx, 'Load_Combination_Name']}
-- **Applied Loads:**
-  - Fz = {critical_df.loc[most_critical_idx, 'Fz_tonf']:.2f} tonf
-  - Mx = {critical_df.loc[most_critical_idx, 'Mx_tonfm']:.2f} tonf·m
-  - My = {critical_df.loc[most_critical_idx, 'My_tonfm']:.2f} tonf·m
-- **Max Pile Load:** {critical_df.loc[most_critical_idx, 'Max_Pile_Load_tonf']:.2f} tonf
-- **Utilization Ratio:** {critical_df.loc[most_critical_idx, 'Utilization_Ratio']:.1%}
-- **Status:** {'✅ SAFE' if critical_df.loc[most_critical_idx, 'Is_Safe'] else '❌ UNSAFE - OVER CAPACITY'}
-
-### 3.2 NODE WITH MOST PILES
-**Node {int(critical_df.loc[most_piles_idx, 'Node'])}:**
-- **Number of Piles:** {int(critical_df.loc[most_piles_idx, 'Number_of_Piles'])}
-- **Foundation Type:** {critical_df.loc[most_piles_idx, 'Foundation_Type']} - {critical_df.loc[most_piles_idx, 'Foundation_Name']}
-- **Load Combination:** {critical_df.loc[most_piles_idx, 'Load_Combination_Name']}
-- **Utilization Ratio:** {critical_df.loc[most_piles_idx, 'Utilization_Ratio']:.1%}
-- **Criticality Score:** {critical_df.loc[most_piles_idx, 'Criticality_Score']:.3f}
-- **Max Pile Load:** {critical_df.loc[most_piles_idx, 'Max_Pile_Load_tonf']:.2f} tonf
-
-### 3.3 NODE WITH HIGHEST UTILIZATION
-**Node {int(critical_df.loc[highest_util_idx, 'Node'])}:**
-- **Utilization Ratio:** {critical_df.loc[highest_util_idx, 'Utilization_Ratio']:.1%}
-- **Foundation Type:** {critical_df.loc[highest_util_idx, 'Foundation_Type']} - {critical_df.loc[highest_util_idx, 'Foundation_Name']}
-- **Number of Piles:** {int(critical_df.loc[highest_util_idx, 'Number_of_Piles'])}
-- **Load Combination:** {critical_df.loc[highest_util_idx, 'Load_Combination_Name']}
-- **Max Pile Load:** {critical_df.loc[highest_util_idx, 'Max_Pile_Load_tonf']:.2f} tonf (Capacity: {pile_capacity} tonf)
-- **Status:** {'✅ SAFE' if critical_df.loc[highest_util_idx, 'Is_Safe'] else '❌ UNSAFE - OVER CAPACITY'}
-
----
-
-## 4. TOP 10 MOST CRITICAL NODES
-"""
-        
-        # Add top 10 critical nodes
-        top_10 = critical_df.nlargest(10, 'Criticality_Score')
-        for rank, (idx, row) in enumerate(top_10.iterrows(), 1):
-            report += f"""
-### Rank {rank}: Node {int(row['Node'])} (Criticality: {row['Criticality_Score']:.3f})
-- **Foundation:** {row['Foundation_Type']} - {row['Foundation_Name']} ({row['Number_of_Piles']} piles)
-- **Location:** X={row['X']:.2f}m, Y={row['Y']:.2f}m, Z={row['Z']:.2f}m
-- **Load Case Code:** {row['Load_Case_Code']}
-- **Load Combination:** {row['Load_Combination_Name']}
-- **Applied Loads:** Fz={row['Fz_tonf']:.2f} tonf, Mx={row['Mx_tonfm']:.2f} tonf·m, My={row['My_tonfm']:.2f} tonf·m
-- **Max Pile Load:** {row['Max_Pile_Load_tonf']:.2f} tonf
-- **Utilization:** {row['Utilization_Ratio']:.1%}
-- **Load Magnitude:** {row['Load_Magnitude']:.3f}
-- **Moment Intensity:** {row['Moment_Intensity']:.3f}
-- **Category:** {row['Category']}
-- **Status:** {'✅ Safe' if row['Is_Safe'] else '❌ Over-capacity'}
-"""
-        
-        report += "\n\n---\n\n## 5. FOUNDATION DISTRIBUTION ANALYSIS\n\n"
-        
-        foundation_summary = critical_df.groupby('Foundation_Type').agg({
-            'Node': 'count',
-            'Number_of_Piles': 'first',
-            'Foundation_Name': 'first',
-            'Criticality_Score': ['mean', 'max'],
-            'Utilization_Ratio': ['mean', 'max']
-        }).round(3)
-        
-        for found_type in foundation_summary.index:
-            node_count = foundation_summary.loc[found_type, ('Node', 'count')]
-            n_piles = foundation_summary.loc[found_type, ('Number_of_Piles', 'first')]
-            f_name = foundation_summary.loc[found_type, ('Foundation_Name', 'first')]
-            avg_crit = foundation_summary.loc[found_type, ('Criticality_Score', 'mean')]
-            max_crit = foundation_summary.loc[found_type, ('Criticality_Score', 'max')]
-            avg_util = foundation_summary.loc[found_type, ('Utilization_Ratio', 'mean')]
-            max_util = foundation_summary.loc[found_type, ('Utilization_Ratio', 'max')]
-            total_piles = int(node_count * n_piles)
+            # JSON export for complete data structure
+            json_export = {
+                'metadata': {
+                    'export_date': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                    'pile_diameter': pile_diameter,
+                    'pile_capacity': pile_capacity,
+                    'target_utilization': target_utilization,
+                    'total_nodes': len(critical_df),
+                    'total_load_cases': len(results)
+                },
+                'critical_summary': critical_df_sorted.to_dict('records'),
+                'foundation_properties': st.session_state.foundation_properties,
+                'custom_foundations': st.session_state.custom_foundations
+            }
             
-            report += f"""### {found_type}: {f_name}
-- **Occurrences:** {int(node_count)} nodes
-- **Piles per Foundation:** {int(n_piles)}
-- **Total Piles for this Type:** {total_piles}
-- **Average Criticality:** {avg_crit:.3f}
-- **Maximum Criticality:** {max_crit:.3f}
-- **Average Utilization:** {avg_util:.1%}
-- **Maximum Utilization:** {max_util:.1%}
-
-"""
+            json_str = json.dumps(json_export, indent=2, default=str)
+            
+            st.download_button(
+                "📥 Download Complete Data (JSON)",
+                data=json_str,
+                file_name=f"foundation_analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+                mime="application/json",
+                use_container_width=True
+            )
         
-        report += "\n\n---\n\n## 6. WARNINGS AND RECOMMENDATIONS\n\n"
+        # Visualizations for export
+        st.markdown("---")
+        st.markdown("#### Criticality Distribution")
         
-        # High criticality nodes
-        high_crit = critical_df[critical_df['Criticality_Score'] > 0.8]
-        if len(high_crit) > 0:
-            report += f"### 6.1 High Criticality Nodes (Score > 0.8)\n"
-            report += f"**{len(high_crit)} nodes require special attention:**\n\n"
-            for _, row in high_crit.iterrows():
-                report += f"- **Node {int(row['Node'])}:** Criticality={row['Criticality_Score']:.3f}, Utilization={row['Utilization_Ratio']:.1%}, Load: {row['Load_Combination_Name']}\n"
-            report += "\n"
+        # Criticality histogram
+        fig_hist = go.Figure()
+        fig_hist.add_trace(go.Histogram(
+            x=critical_df['Criticality_Score'],
+            nbinsx=20,
+            marker_color='#1f77b4',
+            name='Criticality Score'
+        ))
         
-        # Unsafe designs
-        unsafe_nodes = critical_df[~critical_df['Is_Safe']]
-        if len(unsafe_nodes) > 0:
-            report += f"### 6.2 ❌ UNSAFE DESIGNS - IMMEDIATE ACTION REQUIRED\n"
-            report += f"**{len(unsafe_nodes)} nodes exceed pile capacity:**\n\n"
-            for _, row in unsafe_nodes.iterrows():
-                report += f"- **Node {int(row['Node'])}:** {row['Utilization_Ratio']:.1%} utilization ({row['Foundation_Type']}, {row['Number_of_Piles']} piles)\n"
-                report += f"  - Load Combination: {row['Load_Combination_Name']}\n"
-                report += f"  - Max Pile Load: {row['Max_Pile_Load_tonf']:.2f} tonf (Capacity: {pile_capacity} tonf)\n"
-            report += "\n**Recommendation:** Increase pile capacity or add more piles to these foundations.\n\n"
-        
-        # Tension nodes
-        tension_nodes = critical_df[critical_df['Has_Tension']]
-        if len(tension_nodes) > 0:
-            report += f"### 6.3 ⚠️ TENSION CONDITIONS\n"
-            report += f"**{len(tension_nodes)} nodes have tensile forces:**\n\n"
-            for _, row in tension_nodes.iterrows():
-                report += f"- **Node {int(row['Node'])}:** {row['Foundation_Type']} ({row['Number_of_Piles']} piles)\n"
-            report += "\n**Recommendation:** Consider tension piles or verify anchorage capacity.\n\n"
-        
-        # Zero moment warning
-        if zero_moment_count > 0:
-            report += f"### 6.4 ⚠️ DATA QUALITY NOTICE\n"
-            report += f"**{zero_moment_count} nodes show zero moments (Mx=0, My=0).**\n"
-            report += "This may indicate:\n"
-            report += "- Pure axial loading conditions\n"
-            report += "- Potential data quality issues\n"
-            report += "- Missing moment data from analysis\n\n"
-            report += "**Recommendation:** Verify structural analysis output for completeness.\n\n"
-        
-        report += "\n\n---\n\n## 7. CONCLUSION\n\n"
-        report += f"This analysis evaluated **{len(critical_df)} nodes** across multiple load combinations using multi-factor criticality scoring.\n\n"
-        report += f"**Key Findings:**\n"
-        report += f"- Total pile count required: **{int(critical_df['Number_of_Piles'].sum())} piles**\n"
-        report += f"- Average foundation size: **{critical_df['Number_of_Piles'].mean():.1f} piles per node**\n"
-        report += f"- Overall average utilization: **{critical_df['Utilization_Ratio'].mean():.1%}**\n"
-        report += f"- Design efficiency: **{len(critical_df[critical_df['Is_Safe']])/len(critical_df)*100:.1f}% safe designs**\n\n"
-        
-        if len(unsafe_nodes) > 0:
-            report += f"⚠️ **CRITICAL:** {len(unsafe_nodes)} nodes require immediate design revision.\n\n"
-        else:
-            report += "✅ **All nodes are within safe capacity limits.**\n\n"
-        
-        report += "\n---\n\n"
-        report += "**Report prepared by:** Advanced Pile Foundation Analysis Tool\n"
-        report += f"**Analysis Date:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
-        report += "\n**Note:** All load combinations shown are descriptive names (e.g., SERV : D + (L)) for engineering clarity.\n"
-        
-        st.download_button(
-            "📥 Download Comprehensive Report (Markdown)",
-            data=report,
-            file_name=f"pile_foundation_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md",
-            mime="text/markdown",
-            use_container_width=True
+        fig_hist.update_layout(
+            title='Distribution of Criticality Scores',
+            xaxis_title='Criticality Score',
+            yaxis_title='Number of Nodes',
+            height=400
         )
         
-        st.success("✅ Export ready! All files display descriptive load combination names instead of codes.")
-    
+        st.plotly_chart(fig_hist, use_container_width=True)
+        
+        # Critical load combinations breakdown
+        st.markdown("#### Critical Load Combination Summary")
+        
+        combo_summary = critical_df.groupby('Load_Combination_Name').agg({
+            'Node': 'count',
+            'Criticality_Score': 'mean',
+            'Utilization_Ratio': 'mean'
+        }).reset_index()
+        
+        combo_summary.columns = ['Load Combination', 'Node Count', 'Avg Criticality', 'Avg Utilization']
+        combo_summary = combo_summary.sort_values('Node Count', ascending=False)
+        
+        combo_summary['Avg Criticality'] = combo_summary['Avg Criticality'].apply(lambda x: f"{x:.3f}")
+        combo_summary['Avg Utilization'] = combo_summary['Avg Utilization'].apply(lambda x: f"{x:.1%}")
+        
+        st.dataframe(combo_summary, use_container_width=True, hide_index=True)
+        
     else:
-        st.info("⚠️ No results to export. Please run analysis first in Tab 3: Data & Analysis.")
+        st.info("Run analysis first to export results")
+
+# ===================== FOOTER =====================
+st.markdown("---")
+st.markdown("""
+<div style="text-align: center; color: #666; padding: 2rem 0;">
+    <p><strong>Advanced Pile Foundation Analysis Tool</strong></p>
+    <p>Theory-based structural design following proper engineering principles</p>
+    <p><small>Formula: P<sub>max</sub> = P/n + |M<sub>x</sub>|·c<sub>y</sub>/I<sub>xx</sub> + |M<sub>y</sub>|·c<sub>x</sub>/I<sub>yy</sub></small></p>
+</div>
+""", unsafe_allow_html=True)
