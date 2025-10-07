@@ -520,31 +520,23 @@ if analyze_button and geom is not None:
             area = section.get_area()
             
             # For sections with material properties, use elastic versions
-            try:
-                # Try elastic properties first (for sections with materials)
-                Ixx = section.get_eig()[0]
-                Iyy = section.get_eig()[1]
-                Ixy = section.get_eig()[2]
-                cx, cy = section.get_ec()
-                rx = section.get_erc()[0]
-                ry = section.get_erc()[1]
-            except:
-                # Fall back to geometric properties if elastic not available
-                Ixx = section.get_ig()[0]
-                Iyy = section.get_ig()[1]
-                Ixy = section.get_ig()[2]
-                cx, cy = section.get_c()
-                rx = section.get_rc()[0]
-                ry = section.get_rc()[1]
+            Ixx = section.get_eig()[0]
+            Iyy = section.get_eig()[1]
+            Ixy = section.get_eig()[2]
+            cx, cy = section.get_c()  # Centroid works for both geometric and composite
+            rx = section.get_erc()[0]
+            ry = section.get_erc()[1]
             
-            # Section moduli
-            Zxx_plus = section.get_z()[0]
-            Zxx_minus = section.get_z()[1]
-            Zyy_plus = section.get_z()[2]
-            Zyy_minus = section.get_z()[3]
-            Sxx = section.get_s()[0]
-            Syy = section.get_s()[1]
-            J = section.get_j()
+            # Section moduli - elastic and plastic
+            Sxx = section.get_es()[0]
+            Syy = section.get_es()[1]
+            
+            Zxx_plus = section.get_ez()[0]
+            Zxx_minus = section.get_ez()[1]
+            Zyy_plus = section.get_ez()[2]
+            Zyy_minus = section.get_ez()[3]
+            
+            J = section.get_ej()
             
             with col2:
                 st.header("Interactive Visualization")
