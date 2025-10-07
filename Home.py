@@ -524,8 +524,10 @@ if analyze_button and geom is not None:
             Iyy = section.get_eig()[1]
             Ixy = section.get_eig()[2]
             cx, cy = section.get_c()  # Centroid works for both geometric and composite
-            rx = section.get_erc()[0]
-            ry = section.get_erc()[1]
+            
+            # Calculate radius of gyration manually: r = sqrt(I/A)
+            rx = np.sqrt(Ixx / area)
+            ry = np.sqrt(Iyy / area)
             
             # Section moduli - elastic and plastic
             Sxx = section.get_es()[0]
