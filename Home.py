@@ -1,7 +1,9 @@
 import streamlit as st
 import numpy as np
 import matplotlib.pyplot as plt
-from sectionproperties.pre.library import rectangular_section, i_section
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+from sectionproperties.pre.library import rectangular_section, i_section, circular_section, circular_hollow_section
 from sectionproperties.pre import Material, Geometry
 from sectionproperties.pre.geometry import CompoundGeometry
 from sectionproperties.analysis import Section
@@ -13,7 +15,7 @@ st.set_page_config(page_title="Steel Section Properties Analyzer", layout="wide"
 
 # Title and description
 st.title("🏗️ Steel Built-Up Section Properties Analyzer")
-st.markdown("Analyze geometric and mechanical properties of steel built-up sections")
+st.markdown("Analyze geometric and mechanical properties of steel built-up sections with interactive visualization")
 
 # Sidebar for section type selection
 st.sidebar.header("Section Configuration")
@@ -24,7 +26,7 @@ input_method = st.sidebar.radio(
 
 # Material properties
 st.sidebar.header("Material Properties")
-steel_grade = st.sidebar.selectbox("Steel Grade", ["A36", "A572 Gr50", "A992", "Custom"])
+steel_grade = st.sidebar.selectbox("Steel Grade", ["A36", "A572 Gr50", "A992", "S275", "S355", "Custom"])
 
 if steel_grade == "Custom":
     E = st.sidebar.number_input("Elastic Modulus (MPa)", value=200000.0)
@@ -33,7 +35,9 @@ else:
     steel_properties = {
         "A36": {"E": 200000, "fy": 250},
         "A572 Gr50": {"E": 200000, "fy": 345},
-        "A992": {"E": 200000, "fy": 345}
+        "A992": {"E": 200000, "fy": 345},
+        "S275": {"E": 210000, "fy": 275},
+        "S355": {"E": 210000, "fy": 355}
     }
     E = steel_properties[steel_grade]["E"]
     fy = steel_properties[steel_grade]["fy"]
@@ -60,6 +64,100 @@ if 'node_data' not in st.session_state:
         'Y (mm)': [0.0, 0.0, 10.0, 10.0]
     })
 
+def create_interactive_section_plot(section, cx, cy):
+    """Create interactive plotly visualization of the section"""
+    # Get mesh data
+    mesh = section.mesh
+    vertices = mesh['vertices']
+    elements = mesh['elements'][0]
+    
+    # Create triangles for plotly
+    x_tri = []
+    y_tri = []
+    
+    for element in elements:
+        for i in range(3):
+            x_tri.append(vertices[element[i]][0])
+            y_tri.append(vertices[element[i]][1])
+        x_tri.append(None)  # Separate triangles
+        y_tri.append(None)
+    
+    # Create figure
+    fig = go.Figure()
+    
+    # Add mesh
+    fig.add_trace(go.Scatter(
+        x=x_tri,
+        y=y_tri,
+        mode='lines',
+        line=dict(color='steelblue', width=0.5),
+        fill='toself',
+        fillcolor='lightsteelblue',
+        name='Section',
+        hoverinfo='skip'
+    ))
+    
+    # Add centroid
+    fig.add_trace(go.Scatter(
+        x=[cx],
+        y=[cy],
+        mode='markers',
+        marker=dict(size=15, color='red', symbol='star'),
+        name=f'Centroid ({cx:.2f}, {cy:.2f})',
+        hovertemplate='Centroid<br>X: %{x:.2f} mm<br>Y: %{y:.2f} mm<extra></extra>'
+    ))
+    
+    # Add axes through centroid
+    x_range = [min(x_tri), max(x_tri)]
+    y_range = [min(y_tri), max(y_tri)]
+    
+    # X-axis
+    fig.add_trace(go.Scatter(
+        x=[x_range[0], x_range[1]],
+        y=[cy, cy],
+        mode='lines',
+        line=dict(color='red', width=1, dash='dash'),
+        name='X-axis',
+        hoverinfo='skip'
+    ))
+    
+    # Y-axis
+    fig.add_trace(go.Scatter(
+        x=[cx, cx],
+        y=[y_range[0], y_range[1]],
+        mode='lines',
+        line=dict(color='green', width=1, dash='dash'),
+        name='Y-axis',
+        hoverinfo='skip'
+    ))
+    
+    fig.update_layout(
+        title='Interactive Section Geometry',
+        xaxis_title='X (mm)',
+        yaxis_title='Y (mm)',
+        hovermode='closest',
+        showlegend=True,
+        width=800,
+        height=600,
+        yaxis=dict(scaleanchor="x", scaleratio=1)
+    )
+    
+    return fig
+
+def create_stress_visualization(section, moment_x=0, moment_y=0):
+    """Create stress distribution visualization"""
+    fig = make_subplots(
+        rows=1, cols=2,
+        subplot_titles=('Bending Stress σxx', 'Bending Stress σyy'),
+        specs=[[{'type': 'scatter'}, {'type': 'scatter'}]]
+    )
+    
+    # This is a simplified visualization - for full stress analysis,
+    # you'd need to calculate stresses at each mesh point
+    st.info("🔄 Stress visualization feature - Coming soon with full stress analysis")
+    
+    return None
+
 # Main content area
 col1, col2 = st.columns([1, 1])
 
@@ -70,7 +168,8 @@ with col1:
     if input_method == "Simple Shapes":
         section_type = st.selectbox(
             "Select Section Type",
-            ["I-Section", "Box Section", "Channel Section", "T-Section"]
+            ["I-Section", "Box Section", "Pipe (CHS)", "Rectangular Hollow Section (RHS)", 
+             "Channel Section", "T-Section", "Angle Section"]
         )
         
         if section_type == "I-Section":
@@ -93,6 +192,38 @@ with col1:
             inner = rectangular_section(b=b-2*tw, d=d-2*tf, material=steel).shift_section(tw, tf)
             geom = outer - inner
             
+        elif section_type == "Pipe (CHS)":
+            st.subheader("Circular Hollow Section (Pipe) Parameters")
+            st.write("💡 CHS - Circular Hollow Section")
+            outer_diameter = st.number_input("Outer Diameter (mm)", value=200.0, min_value=0.1)
+            thickness = st.number_input("Wall Thickness (mm)", value=10.0, min_value=0.1)
+            
+            inner_diameter = outer_diameter - 2 * thickness
+            if inner_diameter > 0:
+                geom = circular_hollow_section(
+                    d=outer_diameter, 
+                    t=thickness, 
+                    n=64, 
+                    material=steel
+                )
+            else:
+                st.error("❌ Wall thickness too large for given diameter")
+                geom = circular_section(d=outer_diameter, n=64, material=steel)
+            
+            # Display section info
+            st.info(f"Inner Diameter: {inner_diameter:.2f} mm")
+            
+        elif section_type == "Rectangular Hollow Section (RHS)":
+            st.subheader("Rectangular Hollow Section Parameters")
+            st.write("💡 RHS - Rectangular Hollow Section")
+            b = st.number_input("Width (mm)", value=200.0, min_value=0.1)
+            d = st.number_input("Depth (mm)", value=300.0, min_value=0.1)
+            t = st.number_input("Wall Thickness (mm)", value=10.0, min_value=0.1)
+            
+            outer = rectangular_section(b=b, d=d, material=steel)
+            inner = rectangular_section(b=b-2*t, d=d-2*t, material=steel).shift_section(t, t)
+            geom = outer - inner
+            
         elif section_type == "Channel Section":
             st.subheader("Channel Section Parameters")
             d = st.number_input("Overall Depth (mm)", value=300.0, min_value=0.1)
@@ -105,7 +236,7 @@ with col1:
             bottom_flange = rectangular_section(b=b, d=tf, material=steel)
             geom = web + top_flange + bottom_flange
             
-        else:  # T-Section
+        elif section_type == "T-Section":
             st.subheader("T-Section Parameters")
             bf = st.number_input("Flange Width (mm)", value=200.0, min_value=0.1)
             tf = st.number_input("Flange Thickness (mm)", value=15.0, min_value=0.1)
@@ -115,6 +246,16 @@ with col1:
             flange = rectangular_section(b=bf, d=tf, material=steel).shift_section(0, d-tf)
             web = rectangular_section(b=tw, d=d-tf, material=steel).shift_section((bf-tw)/2, 0)
             geom = flange + web
+            
+        else:  # Angle Section
+            st.subheader("Angle Section Parameters")
+            d = st.number_input("Leg 1 Length (mm)", value=100.0, min_value=0.1)
+            b = st.number_input("Leg 2 Length (mm)", value=100.0, min_value=0.1)
+            t = st.number_input("Thickness (mm)", value=10.0, min_value=0.1)
+            
+            leg1 = rectangular_section(b=t, d=d, material=steel)
+            leg2 = rectangular_section(b=b, d=t, material=steel)
+            geom = leg1 + leg2
     
     # ============ NODE-BASED INPUT METHOD ============
     elif input_method == "Node-Based Input":
@@ -138,7 +279,7 @@ with col1:
             
             # Add preset shapes
             st.write("**Quick Presets:**")
-            col_a, col_b, col_c = st.columns(3)
+            col_a, col_b, col_c, col_d = st.columns(4)
             
             with col_a:
                 if st.button("Rectangle"):
@@ -161,9 +302,20 @@ with col1:
             with col_c:
                 if st.button("Z-Shape"):
                     st.session_state.node_data = pd.DataFrame({
-                        'Node': [1, 2, 3, 4, 5, 6],
-                        'X (mm)': [0.0, 150.0, 150.0, 15.0, 15.0, 0.0],
-                        'Y (mm)': [0.0, 0.0, 15.0, 15.0, 150.0, 150.0]
+                        'Node': [1, 2, 3, 4, 5, 6, 7, 8],
+                        'X (mm)': [0.0, 150.0, 150.0, 135.0, 135.0, 15.0, 15.0, 0.0],
+                        'Y (mm)': [0.0, 0.0, 15.0, 15.0, 135.0, 135.0, 150.0, 150.0]
+                    })
+                    st.rerun()
+            
+            with col_d:
+                if st.button("Hexagon"):
+                    angles = np.linspace(0, 2*np.pi, 7)
+                    radius = 100
+                    st.session_state.node_data = pd.DataFrame({
+                        'Node': list(range(1, 7)),
+                        'X (mm)': [radius * np.cos(a) + radius for a in angles[:-1]],
+                        'Y (mm)': [radius * np.sin(a) + radius for a in angles[:-1]]
                     })
                     st.rerun()
             
@@ -212,7 +364,7 @@ with col1:
         with col_add:
             component_type = st.selectbox(
                 "Component Type",
-                ["Plate", "I-Section", "Channel", "Angle"]
+                ["Plate", "I-Section", "Channel", "Angle", "Pipe (CHS)", "RHS"]
             )
         
         with st.expander("➕ Add New Component", expanded=True):
@@ -268,7 +420,7 @@ with col1:
                     st.session_state.geometries.append(("Channel", comp))
                     st.success(f"✅ Added channel {len(st.session_state.geometries)}")
             
-            else:  # Angle
+            elif component_type == "Angle":
                 c_d = st.number_input("Leg 1 Length (mm)", value=100.0, key="a_d")
                 c_b = st.number_input("Leg 2 Length (mm)", value=100.0, key="a_b")
                 c_t = st.number_input("Thickness (mm)", value=10.0, key="a_t")
@@ -285,6 +437,36 @@ with col1:
                     comp = comp.shift_section(x_offset=c_x, y_offset=c_y)
                     st.session_state.geometries.append(("Angle", comp))
                     st.success(f"✅ Added angle {len(st.session_state.geometries)}")
+            
+            elif component_type == "Pipe (CHS)":
+                c_od = st.number_input("Outer Diameter (mm)", value=200.0, key="p_od")
+                c_t = st.number_input("Wall Thickness (mm)", value=10.0, key="p_t")
+                c_x = st.number_input("X Position (mm)", value=0.0, key="p_x")
+                c_y = st.number_input("Y Position (mm)", value=0.0, key="p_y")
+                
+                if st.button("Add Pipe"):
+                    comp = circular_hollow_section(d=c_od, t=c_t, n=64, material=steel)
+                    comp = comp.shift_section(x_offset=c_x, y_offset=c_y)
+                    st.session_state.geometries.append(("Pipe", comp))
+                    st.success(f"✅ Added pipe {len(st.session_state.geometries)}")
+            
+            else:  # RHS
+                c_b = st.number_input("Width (mm)", value=200.0, key="rhs_b")
+                c_d = st.number_input("Depth (mm)", value=300.0, key="rhs_d")
+                c_t = st.number_input("Wall Thickness (mm)", value=10.0, key="rhs_t")
+                c_x = st.number_input("X Position (mm)", value=0.0, key="rhs_x")
+                c_y = st.number_input("Y Position (mm)", value=0.0, key="rhs_y")
+                c_rotation = st.number_input("Rotation (degrees)", value=0.0, key="rhs_rot")
+                
+                if st.button("Add RHS"):
+                    outer = rectangular_section(b=c_b, d=c_d, material=steel)
+                    inner = rectangular_section(b=c_b-2*c_t, d=c_d-2*c_t, material=steel).shift_section(c_t, c_t)
+                    comp = outer - inner
+                    if c_rotation != 0:
+                        comp = comp.rotate_section(angle=c_rotation)
+                    comp = comp.shift_section(x_offset=c_x, y_offset=c_y)
+                    st.session_state.geometries.append(("RHS", comp))
+                    st.success(f"✅ Added RHS {len(st.session_state.geometries)}")
         
         # Display added components
         st.write(f"**Components Added: {len(st.session_state.geometries)}**")
@@ -311,6 +493,12 @@ with col1:
         else:
             geom = None
             st.warning("⚠️ No components added yet")
+
+# Visualization options
+st.sidebar.header("Visualization Options")
+show_mesh = st.sidebar.checkbox("Show Mesh", value=True)
+show_centroid = st.sidebar.checkbox("Show Centroid", value=True)
+show_axes = st.sidebar.checkbox("Show Principal Axes", value=True)
 
 # Analyze button
 analyze_button = st.sidebar.button("🔍 Analyze Section", type="primary")
@@ -345,22 +533,49 @@ if analyze_button and geom is not None:
             J = section.get_j()
             
             with col2:
-                st.header("Analysis Results")
+                st.header("Interactive Visualization")
                 
-                # Display section plot
-                st.subheader("Section Geometry")
-                fig, ax = plt.subplots(figsize=(8, 6))
-                section.plot_mesh(ax=ax, materials=False, mask=None, alpha=0.7)
+                # Create tabs for different visualizations
+                tab1, tab2 = st.tabs(["📐 Section Geometry", "📊 Static Plot"])
                 
-                # Plot centroid
-                ax.plot(cx, cy, 'r*', markersize=15, label='Centroid', zorder=5)
-                ax.legend()
-                ax.set_aspect('equal')
-                ax.grid(True, alpha=0.3)
-                ax.set_xlabel('X (mm)')
-                ax.set_ylabel('Y (mm)')
-                st.pyplot(fig)
-                plt.close()
+                with tab1:
+                    st.subheader("Interactive Section Plot")
+                    st.write("🖱️ Zoom, pan, and hover for details")
+                    
+                    # Create interactive plot
+                    interactive_fig = create_interactive_section_plot(section, cx, cy)
+                    st.plotly_chart(interactive_fig, use_container_width=True)
+                
+                with tab2:
+                    st.subheader("Section Geometry (Static)")
+                    fig, ax = plt.subplots(figsize=(8, 6))
+                    
+                    if show_mesh:
+                        section.plot_mesh(ax=ax, materials=False, mask=None, alpha=0.7)
+                    
+                    # Plot centroid
+                    if show_centroid:
+                        ax.plot(cx, cy, 'r*', markersize=15, label='Centroid', zorder=5)
+                    
+                    # Plot principal axes
+                    if show_axes:
+                        mesh = section.mesh
+                        vertices = mesh['vertices']
+                        x_coords = [v[0] for v in vertices]
+                        y_coords = [v[1] for v in vertices]
+                        x_range = [min(x_coords), max(x_coords)]
+                        y_range = [min(y_coords), max(y_coords)]
+                        
+                        ax.plot(x_range, [cy, cy], 'r--', linewidth=1, label='X-axis', alpha=0.7)
+                        ax.plot([cx, cx], y_range, 'g--', linewidth=1, label='Y-axis', alpha=0.7)
+                    
+                    ax.legend()
+                    ax.set_aspect('equal')
+                    ax.grid(True, alpha=0.3)
+                    ax.set_xlabel('X (mm)')
+                    ax.set_ylabel('Y (mm)')
+                    st.pyplot(fig)
+                    plt.close()
             
             # Create detailed results
             st.header("📊 Section Properties Report")
@@ -485,11 +700,13 @@ if analyze_button and geom is not None:
             )
             
             # Display table
-            st.dataframe(df_report, use_container_width=True)
+            st.dataframe(df_report, use_container_width=True, height=600)
             
         except Exception as e:
             st.error(f"❌ Error during analysis: {str(e)}")
             st.write("Please check your section definition and try again.")
+            import traceback
+            st.code(traceback.format_exc())
             
 else:
     if not analyze_button:
@@ -501,4 +718,4 @@ else:
 
 # Footer
 st.markdown("---")
-st.markdown("*Built with Streamlit and sectionproperties library | For educational purposes*")
+st.markdown("*Built with Streamlit and sectionproperties library | Interactive visualization with Plotly*")
