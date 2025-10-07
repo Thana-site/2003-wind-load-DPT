@@ -44,6 +44,14 @@ else:
     st.sidebar.write(f"E = {E} MPa")
     st.sidebar.write(f"fy = {fy} MPa")
 
+UNITS = {
+    "Metric (mm)": {"length": 1, "area": 1, "inertia": 1},
+    "Metric (m)": {"length": 1000, "area": 1e6, "inertia": 1e12},
+    "Imperial (in)": {"length": 25.4, "area": 645.16, "inertia": 416231.4}
+}
+
+selected_units = st.sidebar.selectbox("Units", list(UNITS.keys()))
+
 # Create material
 steel = Material(
     name="Steel",
@@ -54,6 +62,18 @@ steel = Material(
     color="lightgrey"
 )
 
+STANDARD_SECTIONS = {
+    "W-Sections": {
+        "W200x36": {"d": 201, "bf": 165, "tf": 10.2, "tw": 6.2},
+        "W310x52": {"d": 317, "bf": 167, "tf": 13.2, "tw": 7.6},
+        # Add more standard sections
+    },
+    "HSS": {
+        "HSS152x152x6.4": {"b": 152, "d": 152, "t": 6.4},
+        # Add more HSS sections
+    }
+}
+
 # Initialize session state for storing geometries
 if 'geometries' not in st.session_state:
     st.session_state.geometries = []
@@ -63,6 +83,48 @@ if 'node_data' not in st.session_state:
         'X (mm)': [0.0, 200.0, 200.0, 0.0],
         'Y (mm)': [0.0, 0.0, 10.0, 10.0]
     })
+
+def validate_section_dimensions(section_type, **dimensions):
+    """Validate section dimensions before creation"""
+    if section_type == "I-Section":
+        if dimensions['tf'] * 2 >= dimensions['d']:
+            return False, "Flange thickness too large for section depth"
+        if dimensions['tw'] >= dimensions['bf']:
+            return False, "Web thickness exceeds flange width"
+    return True, "Valid"
+
+def create_stress_visualization(section, N=0, Mx=0, My=0):
+    """Create stress distribution visualization"""
+    # Calculate stresses
+    stress_result = section.calculate_stress(N=N, Mxx=Mx, Myy=My)
+    
+    # Get stress values at mesh nodes
+    stress_vals = stress_result.get_stress()
+    
+    # Create contour plot
+    fig = go.Figure(data=go.Contour(
+        x=stress_result.mesh_nodes[:, 0],
+        y=stress_result.mesh_nodes[:, 1],
+        z=stress_vals['sig_zz'],
+        colorscale='RdBu',
+        colorbar=dict(title="Stress (MPa)")
+    ))
+    
+    return fig
+
+def save_section_config():
+    config = {
+        'input_method': input_method,
+        'section_type': section_type if input_method == "Simple Shapes" else None,
+        'parameters': {...},  # Current parameters
+        'material': steel_grade
+    }
+    return json.dumps(config)
+
+# Add buttons
+if st.button("Save Configuration"):
+    config = save_section_config()
+    st.download_button("Download Config", config, "section_config.json")
 
 def create_interactive_section_plot(section, cx, cy):
     """Create interactive plotly visualization of the section"""
@@ -246,6 +308,18 @@ with col1:
             flange = rectangular_section(b=bf, d=tf, material=steel).shift_section(0, d-tf)
             web = rectangular_section(b=tw, d=d-tf, material=steel).shift_section((bf-tw)/2, 0)
             geom = flange + web
+            
+        elif section_type == "Double Angle":
+            # Back-to-back angles with gap
+            st.subheader("Double Angle Section Parameters")
+            d = st.number_input("Leg Length (mm)", value=100.0)
+            t = st.number_input("Thickness (mm)", value=10.0)
+            gap = st.number_input("Gap between angles (mm)", value=10.0)
+            
+            angle1 = rectangular_section(b=t, d=d, material=steel) + \
+                     rectangular_section(b=d, d=t, material=steel)
+            angle2 = angle1.mirror_section(axis='y', mirror_point=(d/2 + gap/2, 0))
+            geom = angle1 + angle2
             
         else:  # Angle Section
             st.subheader("Angle Section Parameters")
@@ -493,6 +567,26 @@ with col1:
         else:
             geom = None
             st.warning("⚠️ No components added yet")
+
+if 'comparison_results' not in st.session_state:
+    st.session_state.comparison_results = []
+
+# In analysis section:
+if st.button("Add to Comparison"):
+    result = {
+        'name': f"Section_{len(st.session_state.comparison_results)+1}",
+        'area': area,
+        'Ixx': Ixx,
+        'Iyy': Iyy,
+        'Zxx': Zxx_plus
+    }
+    st.session_state.comparison_results.append(result)
+
+# Display comparison table
+if st.session_state.comparison_results:
+    df_compare = pd.DataFrame(st.session_state.comparison_results)
+    st.dataframe(df_compare)
+
 
 # Visualization options
 st.sidebar.header("Visualization Options")
