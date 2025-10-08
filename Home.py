@@ -5,12 +5,11 @@ A Streamlit web app for creating and analyzing structural sections
 
 import streamlit as st
 import pandas as pd
-import matplotlib.pyplot as plt
-from datetime import datetime
 import json
 import os
 import sys
 import traceback
+from datetime import datetime
 
 # Page configuration - MUST be first Streamlit command
 st.set_page_config(
@@ -19,6 +18,11 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
+# Configure matplotlib backend BEFORE importing pyplot
+import matplotlib
+matplotlib.use('Agg')  # Critical for Streamlit
+import matplotlib.pyplot as plt
 
 # Try to import custom modules with error handling
 try:
@@ -65,30 +69,33 @@ def init_session_state():
         'section_name': '',
         'polygon_nodes': [(0, 0), (100, 0), (100, 100), (0, 100)],
         'node_count': 4,
-        'db_manager': None
+        'db_manager': None,
+        'initialized': False
     }
     
     for key, value in defaults.items():
         if key not in st.session_state:
             st.session_state[key] = value
     
-    # Initialize database manager if not exists
-    if st.session_state.db_manager is None:
+    # Initialize database manager if not exists (only once)
+    if not st.session_state.initialized:
         try:
             st.session_state.db_manager = DatabaseManager('data/sections.db')
+            st.session_state.initialized = True
         except Exception as e:
-            st.error(f"Database initialization error: {e}")
+            st.error(f"⚠️ Database initialization error: {e}")
             st.session_state.db_manager = None
+            st.session_state.initialized = True
 
 # Initialize session state
 init_session_state()
 
-# Initialize components
+# Initialize components with error handling
 try:
     ui = UIComponents()
     factory = SectionFactory()
 except Exception as e:
-    st.error(f"Component initialization error: {e}")
+    st.error(f"❌ Component initialization error: {e}")
     st.stop()
 
 # Title and description
@@ -113,6 +120,7 @@ with st.sidebar:
     # Dynamic input based on section type
     st.subheader("📏 Geometric Parameters")
     
+    params = {}
     try:
         if section_type == "I-Beam":
             params = ui.get_ibeam_inputs()
@@ -138,7 +146,7 @@ with st.sidebar:
         else:  # Custom Polygon
             params = ui.get_polygon_inputs()
     except Exception as e:
-        st.error(f"Error getting inputs: {e}")
+        st.error(f"❌ Error getting inputs: {e}")
         params = {}
     
     # Action buttons
@@ -219,9 +227,9 @@ with col1:
             ax2.grid(True, alpha=0.3)
             
             st.pyplot(fig)
-            plt.close()
+            plt.close('all')  # Important: close all figures to free memory
         except Exception as e:
-            st.error(f"Visualization error: {e}")
+            st.error(f"❌ Visualization error: {e}")
             with st.expander("Debug"):
                 st.code(traceback.format_exc())
     else:
@@ -242,37 +250,37 @@ with col2:
                 col_a, col_b, col_c = st.columns(3)
                 
                 with col_a:
-                    st.metric("Area (A)", f"{props['area']:.2f} mm²")
-                    st.metric("Perimeter", f"{props['perimeter']:.2f} mm")
+                    st.metric("Area (A)", f"{props.get('area', 0):.2f} mm²")
+                    st.metric("Perimeter", f"{props.get('perimeter', 0):.2f} mm")
                     
                 with col_b:
-                    st.metric("Ixx", f"{props['ixx_c']:.2e} mm⁴")
-                    st.metric("Iyy", f"{props['iyy_c']:.2e} mm⁴")
+                    st.metric("Ixx", f"{props.get('ixx_c', 0):.2e} mm⁴")
+                    st.metric("Iyy", f"{props.get('iyy_c', 0):.2e} mm⁴")
                     
                 with col_c:
-                    st.metric("Zxx", f"{props['zxx_plus']:.2e} mm³")
-                    st.metric("Zyy", f"{props['zyy_plus']:.2e} mm³")
+                    st.metric("Zxx", f"{props.get('zxx_plus', 0):.2e} mm³")
+                    st.metric("Zyy", f"{props.get('zyy_plus', 0):.2e} mm³")
                 
                 # Detailed properties table
                 st.subheader("Detailed Properties")
                 
                 # Create comprehensive properties DataFrame
                 detailed_props = pd.DataFrame([
-                    ["Cross-sectional Area", props['area'], "mm²"],
-                    ["Perimeter", props['perimeter'], "mm"],
-                    ["Centroid X", props['cx'], "mm"],
-                    ["Centroid Y", props['cy'], "mm"],
-                    ["Moment of Inertia Ixx", props['ixx_c'], "mm⁴"],
-                    ["Moment of Inertia Iyy", props['iyy_c'], "mm⁴"],
-                    ["Product of Inertia Ixy", props['ixy_c'], "mm⁴"],
-                    ["Radius of Gyration rx", props['rx'], "mm"],
-                    ["Radius of Gyration ry", props['ry'], "mm"],
-                    ["Elastic Section Modulus Zxx+", props['zxx_plus'], "mm³"],
-                    ["Elastic Section Modulus Zxx-", props['zxx_minus'], "mm³"],
-                    ["Elastic Section Modulus Zyy+", props['zyy_plus'], "mm³"],
-                    ["Elastic Section Modulus Zyy-", props['zyy_minus'], "mm³"],
-                    ["Torsion Constant J", props['j'], "mm⁴"],
-                    ["Warping Constant Iw", props['gamma'], "mm⁶"],
+                    ["Cross-sectional Area", props.get('area', 0), "mm²"],
+                    ["Perimeter", props.get('perimeter', 0), "mm"],
+                    ["Centroid X", props.get('cx', 0), "mm"],
+                    ["Centroid Y", props.get('cy', 0), "mm"],
+                    ["Moment of Inertia Ixx", props.get('ixx_c', 0), "mm⁴"],
+                    ["Moment of Inertia Iyy", props.get('iyy_c', 0), "mm⁴"],
+                    ["Product of Inertia Ixy", props.get('ixy_c', 0), "mm⁴"],
+                    ["Radius of Gyration rx", props.get('rx', 0), "mm"],
+                    ["Radius of Gyration ry", props.get('ry', 0), "mm"],
+                    ["Elastic Section Modulus Zxx+", props.get('zxx_plus', 0), "mm³"],
+                    ["Elastic Section Modulus Zxx-", props.get('zxx_minus', 0), "mm³"],
+                    ["Elastic Section Modulus Zyy+", props.get('zyy_plus', 0), "mm³"],
+                    ["Elastic Section Modulus Zyy-", props.get('zyy_minus', 0), "mm³"],
+                    ["Torsion Constant J", props.get('j', 0), "mm⁴"],
+                    ["Warping Constant Iw", props.get('gamma', 0), "mm⁶"],
                 ], columns=["Property", "Value", "Unit"])
                 
                 # Format the values column
@@ -282,7 +290,8 @@ with col2:
                 
                 st.dataframe(detailed_props, use_container_width=True, hide_index=True)
             except Exception as e:
-                st.error(f"Error displaying properties: {e}")
+                st.error(f"❌ Error displaying properties: {e}")
+                st.code(traceback.format_exc())
         else:
             st.info("No analysis results yet. Configure and analyze a section first.")
     
@@ -290,7 +299,7 @@ with col2:
         st.header("📁 Saved Sections Database")
         
         if st.session_state.db_manager is None:
-            st.error("Database not available")
+            st.error("❌ Database not available")
         else:
             try:
                 # Load saved sections
@@ -313,8 +322,8 @@ with col2:
                                 if st.button("Load", key=f"load_{idx}"):
                                     try:
                                         # Load section parameters
-                                        params = json.loads(section['parameters'])
-                                        loaded_section = factory.create_section(section['type'], params)
+                                        params_loaded = json.loads(section['parameters'])
+                                        loaded_section = factory.create_section(section['type'], params_loaded)
                                         st.session_state.current_section = loaded_section
                                         
                                         # Recalculate properties
@@ -324,7 +333,7 @@ with col2:
                                         st.success(f"✅ Loaded {section['name']}")
                                         st.rerun()
                                     except Exception as e:
-                                        st.error(f"Load error: {e}")
+                                        st.error(f"❌ Load error: {e}")
                                 
                                 if st.button("Delete", key=f"del_{idx}"):
                                     try:
@@ -332,11 +341,12 @@ with col2:
                                         st.success("🗑️ Section deleted")
                                         st.rerun()
                                     except Exception as e:
-                                        st.error(f"Delete error: {e}")
+                                        st.error(f"❌ Delete error: {e}")
                 else:
                     st.info("No saved sections yet. Create and save your first section!")
             except Exception as e:
-                st.error(f"Database error: {e}")
+                st.error(f"❌ Database error: {e}")
+                st.code(traceback.format_exc())
     
     with tab3:
         st.header("📥 Export Results")
@@ -359,7 +369,7 @@ with col2:
                         use_container_width=True
                     )
                 except Exception as e:
-                    st.error(f"CSV export error: {e}")
+                    st.error(f"❌ CSV export error: {e}")
             
             with col_exp2:
                 # JSON Export
@@ -380,7 +390,7 @@ with col2:
                         use_container_width=True
                     )
                 except Exception as e:
-                    st.error(f"JSON export error: {e}")
+                    st.error(f"❌ JSON export error: {e}")
             
             # Batch export
             st.subheader("Batch Export All Saved Sections")
@@ -398,7 +408,7 @@ with col2:
                     else:
                         st.info("No sections to export")
                 except Exception as e:
-                    st.error(f"Batch export error: {e}")
+                    st.error(f"❌ Batch export error: {e}")
         else:
             st.info("No results to export. Analyze a section first!")
     
