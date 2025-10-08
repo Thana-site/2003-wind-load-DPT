@@ -3,6 +3,8 @@ Calculations Module
 Handles section property calculations and analysis
 """
 
+# Add at the top of calculations.py
+import pandas as pd
 import numpy as np
 from typing import Dict, Any, Optional
 
