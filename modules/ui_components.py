@@ -1,5 +1,5 @@
 """
-UI Components Module
+UI Components Module - Fixed Version
 Reusable UI components for the Streamlit application
 """
 
@@ -81,7 +81,11 @@ class UIComponents:
                 help="Thickness of the web"
             )
         
-        # Optional parameters
+        # Set default values first
+        root_radius = 0.0
+        mesh_size = 10
+        
+        # Optional parameters - override defaults if user expands
         with st.expander("Advanced Options"):
             root_radius = st.number_input(
                 "Root Radius [mm]", 
@@ -97,9 +101,6 @@ class UIComponents:
                 value=10,
                 help="Mesh size for analysis"
             )
-        else:
-            root_radius = 0.0
-            mesh_size = 10
         
         return {
             'depth': depth,
