@@ -1,6 +1,3 @@
-# modules/calculations.py
-
-```python
 """
 Calculations Module - Fixed Version
 Properly handles composite sections and avoids get_ic() errors
@@ -509,4 +506,3 @@ class CompositeSectionAnalyzer:
             })
         
         return pd.DataFrame(data)
-```
