@@ -7,7 +7,38 @@ import streamlit as st
 import pandas as pd
 
 class UIComponents:
-    """Collection of reusable UI components"""
+    """Collection of reusable UI components for section input"""
+    
+    @staticmethod
+    def get_rectangle_inputs():
+        """Get rectangle parameters from user"""
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            width = st.number_input(
+                "Width [mm]", 
+                min_value=10.0, 
+                max_value=2000.0, 
+                value=200.0,
+                step=10.0,
+                help="Width of the rectangle"
+            )
+        
+        with col2:
+            depth = st.number_input(
+                "Depth [mm]", 
+                min_value=10.0, 
+                max_value=2000.0, 
+                value=300.0,
+                step=10.0,
+                help="Depth/height of the rectangle"
+            )
+        
+        return {
+            'width': width,
+            'depth': depth,
+            'mesh_size': 10
+        }
     
     @staticmethod
     def get_ibeam_inputs():
@@ -66,6 +97,9 @@ class UIComponents:
                 value=10,
                 help="Mesh size for analysis"
             )
+        else:
+            root_radius = 0.0
+            mesh_size = 10
         
         return {
             'depth': depth,
@@ -114,7 +148,8 @@ class UIComponents:
                 params = {
                     'depth': depth,
                     'width': width,
-                    'wall_thickness': wall_thickness
+                    'wall_thickness': wall_thickness,
+                    'mesh_size': 10
                 }
             else:
                 web_thickness = st.number_input(
@@ -137,17 +172,9 @@ class UIComponents:
                     'depth': depth,
                     'width': width,
                     'web_thickness': web_thickness,
-                    'flange_thickness': flange_thickness
+                    'flange_thickness': flange_thickness,
+                    'mesh_size': 10
                 }
-        
-        # Mesh size
-        params['mesh_size'] = st.slider(
-            "Mesh Size [mm]", 
-            min_value=1, 
-            max_value=50, 
-            value=10,
-            help="Mesh size for analysis"
-        )
         
         return params
     
@@ -168,7 +195,7 @@ class UIComponents:
             width = st.number_input(
                 "Width [mm]", 
                 min_value=10.0, 
-                max_value=500.0, 
+                max_value=1000.0, 
                 value=100.0,
                 step=10.0,
                 help="Width of the flanges"
@@ -178,7 +205,7 @@ class UIComponents:
             flange_thickness = st.number_input(
                 "Flange Thickness [mm]", 
                 min_value=1.0, 
-                max_value=50.0, 
+                max_value=100.0, 
                 value=8.0,
                 step=1.0,
                 help="Thickness of the flanges"
@@ -207,9 +234,9 @@ class UIComponents:
             "Diameter [mm]", 
             min_value=10.0, 
             max_value=2000.0, 
-            value=100.0,
+            value=200.0,
             step=10.0,
-            help="Diameter of the circular section"
+            help="Diameter of the circle"
         )
         
         n_circle = st.slider(
@@ -229,7 +256,7 @@ class UIComponents:
     
     @staticmethod
     def get_circular_hollow_inputs():
-        """Get circular hollow section (pipe) parameters from user"""
+        """Get circular hollow section parameters from user"""
         col1, col2 = st.columns(2)
         
         with col1:
@@ -237,9 +264,9 @@ class UIComponents:
                 "Outer Diameter [mm]", 
                 min_value=10.0, 
                 max_value=2000.0, 
-                value=150.0,
+                value=200.0,
                 step=10.0,
-                help="Outer diameter of the pipe"
+                help="Outer diameter of the tube"
             )
         
         with col2:
@@ -247,14 +274,10 @@ class UIComponents:
                 "Wall Thickness [mm]", 
                 min_value=1.0, 
                 max_value=100.0, 
-                value=5.0,
+                value=10.0,
                 step=1.0,
-                help="Wall thickness of the pipe"
+                help="Wall thickness of the tube"
             )
-        
-        # Validation
-        if thickness >= outer_diameter / 2:
-            st.error("Wall thickness must be less than radius!")
         
         n_circle = st.slider(
             "Number of segments", 
@@ -362,135 +385,87 @@ class UIComponents:
         }
     
     @staticmethod
-    def get_polygon_inputs():
-        """Get custom polygon parameters from user"""
-        st.write("Define polygon nodes (vertices)")
+    def display_results_table(properties: dict, title: str = "Section Properties"):
+        """Display properties in a formatted table"""
+        st.markdown(f"### {title}")
         
-        # Node input method
-        input_method = st.radio(
-            "Input Method",
-            ["Interactive Table", "Paste Coordinates", "Upload CSV"],
-            horizontal=True
-        )
-        
-        if input_method == "Interactive Table":
-            # Dynamic node table
-            if 'node_count' not in st.session_state:
-                st.session_state.node_count = 4
-            
-            col1, col2 = st.columns([3, 1])
-            with col2:
-                if st.button("➕ Add Node"):
-                    st.session_state.node_count += 1
-                if st.button("➖ Remove Node") and st.session_state.node_count > 3:
-                    st.session_state.node_count -= 1
-            
-            # Create node input table
-            nodes = []
-            cols = st.columns(2)
-            
-            for i in range(st.session_state.node_count):
-                with cols[i % 2]:
-                    x = st.number_input(
-                        f"Node {i+1} X [mm]",
-                        value=float(i * 100) if i < 4 else 0.0,
-                        key=f"node_x_{i}"
-                    )
-                    y = st.number_input(
-                        f"Node {i+1} Y [mm]",
-                        value=float((i % 2) * 100) if i < 4 else 0.0,
-                        key=f"node_y_{i}"
-                    )
-                    nodes.append((x, y))
-            
-            st.session_state.polygon_nodes = nodes
-            
-        elif input_method == "Paste Coordinates":
-            coords_text = st.text_area(
-                "Paste coordinates (x,y pairs, one per line)",
-                value="0,0\n100,0\n100,100\n0,100",
-                height=150
-            )
-            
-            try:
-                nodes = []
-                for line in coords_text.strip().split('\n'):
-                    if line:
-                        x, y = map(float, line.split(','))
-                        nodes.append((x, y))
-                st.session_state.polygon_nodes = nodes
-            except:
-                st.error("Invalid coordinate format. Use: x,y")
-                nodes = st.session_state.polygon_nodes
-        
-        else:  # Upload CSV
-            uploaded_file = st.file_uploader(
-                "Upload CSV with X,Y columns",
-                type=['csv']
-            )
-            
-            if uploaded_file:
-                df = pd.read_csv(uploaded_file)
-                if 'X' in df.columns and 'Y' in df.columns:
-                    nodes = list(zip(df['X'], df['Y']))
-                    st.session_state.polygon_nodes = nodes
-                else:
-                    st.error("CSV must have 'X' and 'Y' columns")
-                    nodes = st.session_state.polygon_nodes
-            else:
-                nodes = st.session_state.polygon_nodes
-        
-        # Display preview
-        if len(nodes) >= 3:
-            st.success(f"✅ {len(nodes)} nodes defined")
-            
-            # Option to add holes
-            add_holes = st.checkbox("Add holes to the section")
-            holes = []
-            
-            if add_holes:
-                st.write("Define hole polygon (must be inside main polygon)")
-                hole_nodes = []
-                for i in range(4):
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        hx = st.number_input(
-                            f"Hole Node {i+1} X",
-                            value=25.0 + i*10,
-                            key=f"hole_x_{i}"
-                        )
-                    with col2:
-                        hy = st.number_input(
-                            f"Hole Node {i+1} Y",
-                            value=25.0 + (i%2)*10,
-                            key=f"hole_y_{i}"
-                        )
-                    hole_nodes.append((hx, hy))
-                holes = [hole_nodes]
-        else:
-            st.error("Need at least 3 nodes to define a polygon")
-            nodes = [(0,0), (100,0), (100,100), (0,100)]
-        
-        params = {
-            'nodes': nodes,
-            'mesh_size': 10
+        # Group properties by category
+        geometric = {
+            'Area': properties.get('area', 0),
+            'Perimeter': properties.get('perimeter', 0),
+            'Centroid X': properties.get('cx', 0),
+            'Centroid Y': properties.get('cy', 0)
         }
         
-        if holes:
-            params['holes'] = holes
+        moments = {
+            'Ixx': properties.get('ixx_c', 0),
+            'Iyy': properties.get('iyy_c', 0),
+            'Ixy': properties.get('ixy_c', 0),
+            'I11': properties.get('i11_c', 0),
+            'I22': properties.get('i22_c', 0)
+        }
         
-        return params
+        moduli = {
+            'Zxx+': properties.get('zxx_plus', 0),
+            'Zxx-': properties.get('zxx_minus', 0),
+            'Zyy+': properties.get('zyy_plus', 0),
+            'Zyy-': properties.get('zyy_minus', 0),
+            'Sxx': properties.get('sxx', 0),
+            'Syy': properties.get('syy', 0)
+        }
+        
+        other = {
+            'rx': properties.get('rx', 0),
+            'ry': properties.get('ry', 0),
+            'J': properties.get('j', 0),
+            'Γ': properties.get('gamma', 0),
+            'φ': properties.get('phi', 0)
+        }
+        
+        # Create tabs for different property groups
+        tabs = st.tabs(["Geometric", "Moments", "Moduli", "Other"])
+        
+        with tabs[0]:
+            df = pd.DataFrame(geometric.items(), columns=['Property', 'Value'])
+            st.dataframe(df, use_container_width=True, hide_index=True)
+        
+        with tabs[1]:
+            df = pd.DataFrame(moments.items(), columns=['Property', 'Value'])
+            st.dataframe(df, use_container_width=True, hide_index=True)
+        
+        with tabs[2]:
+            df = pd.DataFrame(moduli.items(), columns=['Property', 'Value'])
+            st.dataframe(df, use_container_width=True, hide_index=True)
+        
+        with tabs[3]:
+            df = pd.DataFrame(other.items(), columns=['Property', 'Value'])
+            st.dataframe(df, use_container_width=True, hide_index=True)
     
     @staticmethod
-    def display_quick_stats(properties):
-        """Display quick statistics in metrics format"""
-        col1, col2, col3, col4 = st.columns(4)
+    def format_value(value: float, decimals: int = 3) -> str:
+        """Format numerical values for display"""
+        if abs(value) > 1e6 or (abs(value) < 1e-3 and value != 0):
+            return f"{value:.{decimals}e}"
+        else:
+            return f"{value:.{decimals}f}"
+    
+    @staticmethod
+    def create_property_card(title: str, value: float, unit: str, color: str = "#6366f1"):
+        """Create a styled property card"""
+        formatted_value = UIComponents.format_value(value)
         
-        with col1:
-            st.metric("Area", f"{properties['area']:.2f} mm²")
-        with col2:
-            st.metric("Ixx", f"{properties['ixx_c']:.2e} mm⁴")
-        with col3:
-            st.metric("Iyy", f"{properties['iyy_c']:.2e} mm⁴")
-        with col4:
-            st.metric("J", f"{properties['j']:.2e} mm⁴")
+        st.markdown(f"""
+        <div style="
+            background: white;
+            padding: 1rem;
+            border-radius: 0.5rem;
+            border-left: 4px solid {color};
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        ">
+            <div style="color: #6b7280; font-size: 0.875rem;">{title}</div>
+            <div style="color: #1f2937; font-size: 1.5rem; font-weight: 600; margin: 0.25rem 0;">
+                {formatted_value}
+            </div>
+            <div style="color: #9ca3af; font-size: 0.75rem;">{unit}</div>
+        </div>
+        """, unsafe_allow_html=True)
