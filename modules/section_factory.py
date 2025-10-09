@@ -1,6 +1,6 @@
 """
-Section Factory Module - Enhanced Version
-Improved material handling and composite section support
+Section Factory Module - Fixed Version
+Properly exports SectionFactory and handles materials correctly
 """
 
 from sectionproperties.pre.library import (
@@ -36,7 +36,6 @@ class MaterialLibrary:
             elastic_modulus=200000,  # MPa
             poissons_ratio=0.3,
             yield_strength=props["fy"],
-            ultimate_strength=props["fu"],
             density=7.85e-9,  # tonnes/mm³
             color="grey"
         )
@@ -57,7 +56,6 @@ class MaterialLibrary:
             elastic_modulus=70000,  # MPa
             poissons_ratio=0.33,
             yield_strength=props["fy"],
-            ultimate_strength=props["fu"],
             density=2.7e-9,  # tonnes/mm³
             color="silver"
         )
@@ -107,7 +105,8 @@ class EnhancedSectionFactory:
         self.default_material = self.material_library.get_steel("S355")
         
     def create_section(self, section_type: str, params: Dict[str, Any], 
-                      material: Optional[Material] = None) -> Section:
+                      material: Optional[Material] = None,
+                      analyze: bool = True) -> Section:
         """
         Create a section with proper material handling
         
@@ -115,6 +114,7 @@ class EnhancedSectionFactory:
             section_type: Type of section
             params: Geometric parameters
             material: Optional material (uses default steel if None)
+            analyze: Whether to perform analysis
             
         Returns:
             Analyzed Section object
@@ -132,51 +132,92 @@ class EnhancedSectionFactory:
         geometry = self._create_geometry(section_type, params, material)
         
         # Create mesh with adaptive sizing
-        mesh_size = params.get('mesh_size', self._get_adaptive_mesh_size(geometry))
+        mesh_size = params.get('mesh_size', self._get_adaptive_mesh_size(section_type, params))
         
         try:
             geometry.create_mesh(mesh_sizes=[mesh_size])
         except:
-            # Try with coarser mesh if fine mesh fails
-            try:
-                geometry.create_mesh(mesh_sizes=[mesh_size * 2])
-            except:
-                # Last resort - very coarse mesh
-                geometry.create_mesh(mesh_sizes=[mesh_size * 5])
+            # Fallback to coarser mesh if fine mesh fails
+            geometry.create_mesh(mesh_sizes=[mesh_size * 2])
         
         # Create section
         section = Section(geometry=geometry)
         
-        # Perform analysis
-        section.calculate_geometric_properties()
-        
-        # Try advanced analyses with error handling
-        try:
-            section.calculate_warping_properties()
-        except:
-            pass  # Warping not available for all sections
-        
-        try:
-            section.calculate_plastic_properties()
-        except:
-            pass  # Plastic properties not available for all sections
+        # Perform analysis if requested
+        if analyze:
+            section.calculate_geometric_properties()
+            
+            try:
+                section.calculate_warping_properties()
+            except:
+                pass  # Some sections don't support warping
+            
+            try:
+                section.calculate_plastic_properties()
+            except:
+                pass  # Some sections don't support plastic analysis
         
         return section
     
+    def _get_adaptive_mesh_size(self, section_type: str, params: Dict[str, Any]) -> float:
+        """Calculate adaptive mesh size based on geometry"""
+        # Get characteristic dimension
+        if section_type in ['Rectangle', 'Box']:
+            char_dim = min(params.get('width', 100), params.get('depth', 100))
+        elif section_type == 'Circle':
+            char_dim = params.get('diameter', 100)
+        elif section_type == 'Circular Hollow':
+            char_dim = params.get('thickness', 10)
+        else:
+            char_dim = 50
+        
+        # Adaptive mesh size (5-10% of characteristic dimension)
+        return max(2, min(20, char_dim * 0.075))
+    
+    def validate_parameters(self, section_type: str, params: Dict[str, Any]) -> tuple:
+        """
+        Validate section parameters
+        
+        Returns:
+            (is_valid, error_message)
+        """
+        required_params = {
+            'Rectangle': ['width', 'depth'],
+            'I-Beam': ['depth', 'width', 'flange_thickness', 'web_thickness'],
+            'Box': ['depth', 'width'],
+            'Channel': ['depth', 'width', 'flange_thickness', 'web_thickness'],
+            'Circle': ['diameter'],
+            'Circular Hollow': ['outer_diameter', 'thickness'],
+            'T-Section': ['depth', 'width', 'flange_thickness', 'web_thickness'],
+            'Angle': ['leg1_length', 'leg2_length', 'thickness']
+        }
+        
+        if section_type not in required_params:
+            return False, f"Unknown section type: {section_type}"
+        
+        missing = [p for p in required_params[section_type] if p not in params]
+        if missing:
+            return False, f"Missing parameters: {', '.join(missing)}"
+        
+        # Validate positive values
+        for param, value in params.items():
+            if isinstance(value, (int, float)) and value <= 0:
+                return False, f"Parameter {param} must be positive"
+        
+        return True, ""
+    
     def _create_geometry(self, section_type: str, params: Dict[str, Any], 
                         material: Material) -> Geometry:
-        """Create geometry for the specified section type"""
-        
+        """Create geometry based on section type"""
         creators = {
-            "I-Beam": self._create_ibeam,
-            "Box Section": self._create_box,
-            "Channel": self._create_channel,
-            "Circular": self._create_circular,
-            "Circular Hollow": self._create_circular_hollow,
-            "T-Section": self._create_tsection,
-            "Angle": self._create_angle,
-            "Plate": self._create_plate,
-            "Custom Polygon": self._create_polygon
+            'Rectangle': self._create_rectangle,
+            'I-Beam': self._create_ibeam,
+            'Box': self._create_box,
+            'Channel': self._create_channel,
+            'Circle': self._create_circular,
+            'Circular Hollow': self._create_circular_hollow,
+            'T-Section': self._create_tsection,
+            'Angle': self._create_angle
         }
         
         creator = creators.get(section_type)
@@ -185,8 +226,16 @@ class EnhancedSectionFactory:
         
         return creator(params, material)
     
+    def _create_rectangle(self, params: Dict[str, Any], material: Material) -> Geometry:
+        """Create rectangular section geometry"""
+        return rectangular_section(
+            d=float(params['depth']),
+            b=float(params['width']),
+            material=material
+        )
+    
     def _create_ibeam(self, params: Dict[str, Any], material: Material) -> Geometry:
-        """Create I-beam geometry"""
+        """Create I-beam section geometry"""
         return i_section(
             d=float(params['depth']),
             b=float(params['width']),
@@ -276,100 +325,61 @@ class EnhancedSectionFactory:
             material=material
         )
     
-    def _create_plate(self, params: Dict[str, Any], material: Material) -> Geometry:
-        """Create a simple rectangular plate"""
-        return rectangular_section(
-            d=float(params.get('depth', params.get('height', 10))),
-            b=float(params['width']),
-            material=material
-        )
-    
-    def _create_polygon(self, params: Dict[str, Any], material: Material) -> Geometry:
-        """Create custom polygon section geometry"""
-        nodes = params.get('nodes', [])
-        
-        if len(nodes) < 3:
-            raise ValueError("Polygon must have at least 3 nodes")
-        
-        # Create polygon
-        polygon = Polygon(nodes)
-        
-        if not polygon.is_valid:
-            polygon = polygon.buffer(0)
-        
-        # Handle holes
-        if 'holes' in params and params['holes']:
-            for hole in params['holes']:
-                if len(hole) >= 3:
-                    hole_polygon = Polygon(hole)
-                    if hole_polygon.is_valid:
-                        polygon = polygon.difference(hole_polygon)
-        
-        return Geometry(geom=polygon, material=material)
-    
-    def _get_adaptive_mesh_size(self, geometry: Geometry) -> float:
-        """Calculate adaptive mesh size based on geometry size"""
-        try:
-            # Get bounds of geometry
-            bounds = geometry.geom.bounds  # (minx, miny, maxx, maxy)
-            width = bounds[2] - bounds[0]
-            height = bounds[3] - bounds[1]
-            
-            # Use ~50 elements along the smallest dimension
-            min_dim = min(width, height)
-            mesh_size = min_dim / 50
-            
-            # Clamp between reasonable limits
-            return max(0.5, min(mesh_size, 50))
-        except:
-            return 10  # Default fallback
-    
     def create_composite_section(self, sections: List[Dict[str, Any]]) -> Section:
         """
         Create a composite section from multiple sections
         
         Args:
-            sections: List of dictionaries containing:
-                - 'type': Section type
-                - 'params': Parameters
-                - 'material': Optional Material object
-                - 'offset': (x, y) tuple for positioning
-                
+            sections: List of section definitions with type, params, material, and offset
+            
         Returns:
-            Combined Section object
+            Analyzed composite Section object
         """
         if not sections:
             raise ValueError("No sections provided for composite")
         
-        geometries = []
+        # Create first section
+        first = sections[0]
+        combined_geom = self._create_geometry(
+            first['type'], 
+            first['params'],
+            first.get('material', self.default_material)
+        )
         
-        for section_data in sections:
-            # Create individual geometry
-            material = section_data.get('material', self.default_material)
+        # Apply offset if specified
+        if 'offset' in first and first['offset'] != (0, 0):
+            combined_geom = combined_geom.shift_section(
+                x_offset=first['offset'][0],
+                y_offset=first['offset'][1]
+            )
+        
+        # Add remaining sections
+        for section_def in sections[1:]:
             geom = self._create_geometry(
-                section_data['type'],
-                section_data['params'],
-                material
+                section_def['type'],
+                section_def['params'],
+                section_def.get('material', self.default_material)
             )
             
             # Apply offset
-            offset = section_data.get('offset', (0, 0))
-            if offset != (0, 0):
-                geom = geom.shift_section(x_offset=offset[0], y_offset=offset[1])
+            if 'offset' in section_def and section_def['offset'] != (0, 0):
+                geom = geom.shift_section(
+                    x_offset=section_def['offset'][0],
+                    y_offset=section_def['offset'][1]
+                )
             
-            geometries.append(geom)
-        
-        # Combine all geometries
-        combined_geometry = geometries[0]
-        for geom in geometries[1:]:
-            combined_geometry = combined_geometry + geom
+            # Combine geometries
+            combined_geom = combined_geom + geom
         
         # Create mesh
-        mesh_size = self._get_adaptive_mesh_size(combined_geometry)
-        combined_geometry.create_mesh(mesh_sizes=[mesh_size])
+        mesh_size = 10
+        try:
+            combined_geom.create_mesh(mesh_sizes=[mesh_size])
+        except:
+            combined_geom.create_mesh(mesh_sizes=[mesh_size * 2])
         
         # Create and analyze section
-        section = Section(geometry=combined_geometry)
+        section = Section(geometry=combined_geom)
         section.calculate_geometric_properties()
         
         try:
@@ -383,43 +393,7 @@ class EnhancedSectionFactory:
             pass
         
         return section
-    
-    @staticmethod
-    def validate_parameters(section_type: str, params: Dict[str, Any]) -> tuple[bool, str]:
-        """
-        Validate section parameters
-        
-        Returns:
-            (is_valid, error_message)
-        """
-        # Basic validation rules
-        if section_type in ["I-Beam", "Channel", "T-Section"]:
-            required = ['depth', 'width', 'flange_thickness', 'web_thickness']
-            for key in required:
-                if key not in params:
-                    return False, f"Missing required parameter: {key}"
-                if float(params[key]) <= 0:
-                    return False, f"{key} must be positive"
-            
-            # Check thickness constraints
-            if float(params['flange_thickness']) > float(params['depth']) / 2:
-                return False, "Flange thickness too large for depth"
-            if float(params['web_thickness']) > float(params['width']) / 2:
-                return False, "Web thickness too large for width"
-        
-        elif section_type == "Box Section":
-            if 'wall_thickness' in params:
-                t = float(params['wall_thickness'])
-                if t >= float(params['depth']) / 2 or t >= float(params['width']) / 2:
-                    return False, "Wall thickness too large for dimensions"
-        
-        elif section_type == "Circular Hollow":
-            if float(params['thickness']) >= float(params['outer_diameter']) / 2:
-                return False, "Thickness must be less than radius"
-        
-        elif section_type == "Custom Polygon":
-            nodes = params.get('nodes', [])
-            if len(nodes) < 3:
-                return False, "Polygon must have at least 3 nodes"
-        
-        return True, ""
+
+
+# Create an alias for backward compatibility
+SectionFactory = EnhancedSectionFactory
