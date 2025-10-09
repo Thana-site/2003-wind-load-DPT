@@ -1,6 +1,9 @@
+# modules/calculations.py
+
+```python
 """
-Calculations Module - Enhanced Version
-Handles section property calculations with automatic composite detection
+Calculations Module - Fixed Version
+Properly handles composite sections and avoids get_ic() errors
 """
 
 import pandas as pd
@@ -22,7 +25,7 @@ class AnalysisResult:
             self.messages = []
 
 class SectionAnalyzer:
-    """Enhanced analyzer with composite detection and multiple section support"""
+    """Enhanced analyzer with proper composite detection"""
     
     def __init__(self, section):
         """
@@ -44,21 +47,23 @@ class SectionAnalyzer:
         """
         try:
             # Check if geometry has materials
-            if hasattr(self.section, 'geometry') and hasattr(self.section.geometry, 'material'):
-                if self.section.geometry.material is not None:
-                    return True
+            if hasattr(self.section, 'geometry'):
+                if hasattr(self.section.geometry, 'material'):
+                    if self.section.geometry.material is not None:
+                        return True
+                
+                # Check for multiple materials in mesh
+                if hasattr(self.section.geometry, 'materials'):
+                    if self.section.geometry.materials and len(self.section.geometry.materials) > 0:
+                        return True
             
-            # Try to access composite properties as a test
-            try:
-                _ = self.section.get_eic()
-                return True
-            except (AttributeError, TypeError, ValueError):
-                pass
-                
-            # Check for materials in the mesh
-            if hasattr(self.section, 'materials') and self.section.materials:
-                return True
-                
+            # Check section elements for materials
+            if hasattr(self.section, 'elements'):
+                # If any element has a material ID > 0, it's composite
+                for el in self.section.elements:
+                    if hasattr(el, 'material') and el.material is not None:
+                        return True
+            
             return False
             
         except Exception:
@@ -75,7 +80,7 @@ class SectionAnalyzer:
         messages = []
         
         try:
-            # Basic geometric properties
+            # Basic geometric properties (always available)
             properties['area'] = self.section.get_area()
             properties['perimeter'] = self.section.get_perimeter()
             
@@ -86,13 +91,13 @@ class SectionAnalyzer:
             
             # Determine analysis type and get appropriate properties
             if self.is_composite:
-                messages.append("✓ Composite materials detected — using equivalent properties (E*I)")
+                messages.append("✓ Composite materials detected — using E×I properties")
                 properties.update(self._get_composite_properties())
             else:
                 messages.append("✓ Geometric analysis mode — material-independent properties")
                 properties.update(self._get_geometric_properties())
             
-            # Common properties
+            # Common properties (work for both types)
             properties.update(self._get_common_properties())
             
             # Validate and clean results
@@ -123,53 +128,64 @@ class SectionAnalyzer:
         props = {}
         
         try:
-            # Composite second moments of area (E*I)
-            eic = self.section.get_eic()
-            props['eixx_c'] = eic[0]
-            props['eiyy_c'] = eic[1]
-            props['eixy_c'] = eic[2]
+            # For composite sections, use E×I values
+            # Get E×I values (these are safe for composite sections)
+            eig = self.section.get_eig()  # About global origin
+            props['eixx_g'] = eig[0]
+            props['eiyy_g'] = eig[1]
+            props['eixy_g'] = eig[2]
             
-            # For display, also get geometric I (without E)
+            # About centroid (if available)
             try:
-                ic = self.section.get_ic()
-                props['ixx_c'] = ic[0]
-                props['iyy_c'] = ic[1]
-                props['ixy_c'] = ic[2]
+                eic = self.section.get_eic()
+                props['eixx_c'] = eic[0]
+                props['eiyy_c'] = eic[1]
+                props['eixy_c'] = eic[2]
             except:
-                # Estimate geometric I by dividing by E if available
-                if hasattr(self.section.geometry, 'material'):
-                    E = getattr(self.section.geometry.material, 'elastic_modulus', 1)
-                    props['ixx_c'] = props['eixx_c'] / E if E != 0 else props['eixx_c']
-                    props['iyy_c'] = props['eiyy_c'] / E if E != 0 else props['eiyy_c']
-                    props['ixy_c'] = props['eixy_c'] / E if E != 0 else props['eixy_c']
-                else:
-                    props['ixx_c'] = props['eixx_c']
-                    props['iyy_c'] = props['eiyy_c']
-                    props['ixy_c'] = props['eixy_c']
+                # Calculate from global values
+                area = self.section.get_area()
+                cx, cy = self.section.get_c()
+                props['eixx_c'] = props['eixx_g'] - area * cy**2
+                props['eiyy_c'] = props['eiyy_g'] - area * cx**2
+                props['eixy_c'] = props['eixy_g'] - area * cx * cy
             
-            # Composite properties about origin
-            try:
-                eig = self.section.get_eig()
-                props['eixx_g'] = eig[0]
-                props['eiyy_g'] = eig[1]
-                props['eixy_g'] = eig[2]
-            except:
-                props['eixx_g'] = 0
-                props['eiyy_g'] = 0
-                props['eixy_g'] = 0
+            # Try to extract geometric I by dividing by E
+            # This is approximate if multiple materials exist
+            E_ref = self._get_reference_modulus()
+            if E_ref and E_ref > 0:
+                props['ixx_c'] = props['eixx_c'] / E_ref
+                props['iyy_c'] = props['eiyy_c'] / E_ref
+                props['ixy_c'] = props['eixy_c'] / E_ref
+                props['ixx_g'] = props['eixx_g'] / E_ref
+                props['iyy_g'] = props['eiyy_g'] / E_ref
+                props['ixy_g'] = props['eixy_g'] / E_ref
+            else:
+                # Use E×I values directly
+                props['ixx_c'] = props['eixx_c']
+                props['iyy_c'] = props['eiyy_c']
+                props['ixy_c'] = props['eixy_c']
+                props['ixx_g'] = props['eixx_g']
+                props['iyy_g'] = props['eiyy_g']
+                props['ixy_g'] = props['eixy_g']
                 
             # Principal moments
             try:
                 props['ei11_c'] = self.section.get_ei11_c()
                 props['ei22_c'] = self.section.get_ei22_c()
-                props['i11_c'] = props['ei11_c'] / getattr(self.section.geometry.material, 'elastic_modulus', 1)
-                props['i22_c'] = props['ei22_c'] / getattr(self.section.geometry.material, 'elastic_modulus', 1)
+                if E_ref and E_ref > 0:
+                    props['i11_c'] = props['ei11_c'] / E_ref
+                    props['i22_c'] = props['ei22_c'] / E_ref
+                else:
+                    props['i11_c'] = props['ei11_c']
+                    props['i22_c'] = props['ei22_c']
             except:
-                props['i11_c'] = props.get('ixx_c', 0)
-                props['i22_c'] = props.get('iyy_c', 0)
+                props['i11_c'] = max(props.get('ixx_c', 0), props.get('iyy_c', 0))
+                props['i22_c'] = min(props.get('ixx_c', 0), props.get('iyy_c', 0))
                 
         except Exception as e:
-            self.messages.append(f"Composite calculation note: {e}")
+            self.messages.append(f"Note: Some composite properties unavailable: {e}")
+            # Return basic properties at minimum
+            props.update(self._get_fallback_properties())
             
         return props
     
@@ -178,149 +194,174 @@ class SectionAnalyzer:
         props = {}
         
         try:
-            # Geometric second moments of area
+            # Geometric second moments about centroid
             ic = self.section.get_ic()
             props['ixx_c'] = ic[0]
             props['iyy_c'] = ic[1]
             props['ixy_c'] = ic[2]
             
-            # About origin
+            # About global origin
             try:
                 ig = self.section.get_ig()
                 props['ixx_g'] = ig[0]
                 props['iyy_g'] = ig[1]
                 props['ixy_g'] = ig[2]
             except:
-                props['ixx_g'] = 0
-                props['iyy_g'] = 0
-                props['ixy_g'] = 0
+                # Calculate using parallel axis theorem
+                area = self.section.get_area()
+                cx, cy = self.section.get_c()
+                props['ixx_g'] = props['ixx_c'] + area * cy**2
+                props['iyy_g'] = props['iyy_c'] + area * cx**2
+                props['ixy_g'] = props['ixy_c'] + area * cx * cy
             
             # Principal moments
             try:
                 props['i11_c'] = self.section.get_i11_c()
                 props['i22_c'] = self.section.get_i22_c()
             except:
-                props['i11_c'] = props['ixx_c']
-                props['i22_c'] = props['iyy_c']
+                # Calculate from ixx, iyy, ixy
+                ixx = props['ixx_c']
+                iyy = props['iyy_c']
+                ixy = props['ixy_c']
+                
+                avg = (ixx + iyy) / 2
+                diff = (ixx - iyy) / 2
+                props['i11_c'] = avg + np.sqrt(diff**2 + ixy**2)
+                props['i22_c'] = avg - np.sqrt(diff**2 + ixy**2)
                 
         except Exception as e:
-            self.messages.append(f"Geometric calculation note: {e}")
+            self.messages.append(f"Note: Some geometric properties unavailable: {e}")
+            props.update(self._get_fallback_properties())
             
         return props
     
     def _get_common_properties(self) -> Dict[str, Any]:
-        """Get properties common to both composite and geometric sections"""
-        props = {}
-        
-        # Radii of gyration
-        try:
-            rc = self.section.get_rc()
-            props['rx'] = rc[0]
-            props['ry'] = rc[1]
-        except:
-            area = self.section.get_area()
-            ixx = props.get('ixx_c', 0)
-            iyy = props.get('iyy_c', 0)
-            props['rx'] = np.sqrt(ixx / area) if area > 0 else 0
-            props['ry'] = np.sqrt(iyy / area) if area > 0 else 0
-        
-        # Section moduli
-        try:
-            z = self.section.get_z()
-            if len(z) >= 4:
-                props['zxx_plus'] = abs(z[0]) if z[0] != 0 else 0
-                props['zxx_minus'] = abs(z[1]) if z[1] != 0 else 0
-                props['zyy_plus'] = abs(z[2]) if z[2] != 0 else 0
-                props['zyy_minus'] = abs(z[3]) if z[3] != 0 else 0
-        except:
-            # Manual calculation fallback
-            props.update(self._calculate_section_moduli_manually())
-        
-        # Principal angle
-        try:
-            props['phi'] = self.section.get_phi()
-        except:
-            props['phi'] = 0
-        
-        # Torsion constant
-        try:
-            props['j'] = self.section.get_j()
-        except:
-            props['j'] = 0
-        
-        # Warping constant
-        try:
-            props['gamma'] = self.section.get_gamma()
-        except:
-            props['gamma'] = 0
-        
-        # Plastic moduli
-        try:
-            s = self.section.get_s()
-            props['sxx'] = abs(s[0]) if len(s) > 0 else 0
-            props['syy'] = abs(s[1]) if len(s) > 1 else 0
-        except:
-            props['sxx'] = 0
-            props['syy'] = 0
-        
-        return props
-    
-    def _calculate_section_moduli_manually(self) -> Dict[str, Any]:
-        """Manually calculate section moduli from mesh coordinates"""
+        """Get properties that work for both composite and geometric sections"""
         props = {}
         
         try:
-            coords = self.section.mesh_nodes
-            if len(coords) > 0:
-                cx, cy = self.section.get_c()
-                y_coords = coords[:, 1]
-                x_coords = coords[:, 0]
-                
-                y_top = max(y_coords) - cy
-                y_bot = cy - min(y_coords)
-                x_right = max(x_coords) - cx
-                x_left = cx - min(x_coords)
-                
-                ixx = self.properties.get('ixx_c', 0)
-                iyy = self.properties.get('iyy_c', 0)
-                
-                props['zxx_plus'] = ixx / y_top if y_top > 0 else 0
-                props['zxx_minus'] = ixx / y_bot if y_bot > 0 else 0
-                props['zyy_plus'] = iyy / x_right if x_right > 0 else 0
-                props['zyy_minus'] = iyy / x_left if x_left > 0 else 0
+            # Section moduli
+            props['zxx_plus'] = self.section.get_z()[0]
+            props['zxx_minus'] = self.section.get_z()[1]
+            props['zyy_plus'] = self.section.get_z()[2]
+            props['zyy_minus'] = self.section.get_z()[3]
         except:
             props['zxx_plus'] = 0
             props['zxx_minus'] = 0
             props['zyy_plus'] = 0
             props['zyy_minus'] = 0
-            
+        
+        try:
+            # Radii of gyration
+            props['rx'] = self.section.get_r()[0]
+            props['ry'] = self.section.get_r()[1]
+        except:
+            area = self.section.get_area()
+            if area > 0:
+                props['rx'] = np.sqrt(props.get('ixx_c', 0) / area)
+                props['ry'] = np.sqrt(props.get('iyy_c', 0) / area)
+            else:
+                props['rx'] = 0
+                props['ry'] = 0
+        
+        try:
+            # Principal angle
+            props['phi'] = self.section.get_phi() * 180 / np.pi  # Convert to degrees
+        except:
+            props['phi'] = 0
+        
+        try:
+            # Torsion constant
+            props['j'] = self.section.get_j()
+        except:
+            props['j'] = 0
+        
+        try:
+            # Warping constant
+            props['gamma'] = self.section.get_gamma()
+        except:
+            props['gamma'] = 0
+        
+        try:
+            # Plastic moduli
+            props['sxx'] = self.section.get_s()[0]
+            props['syy'] = self.section.get_s()[1]
+        except:
+            props['sxx'] = props.get('zxx_plus', 0) * 1.5  # Approximate
+            props['syy'] = props.get('zyy_plus', 0) * 1.5
+        
+        try:
+            # Shape factors
+            props['sf_xx'] = self.section.get_sf()[0]
+            props['sf_yy'] = self.section.get_sf()[1]
+        except:
+            props['sf_xx'] = 1.5  # Default for rectangular
+            props['sf_yy'] = 1.5
+        
         return props
     
-    def _get_material_info(self) -> Optional[Dict[str, Any]]:
-        """Extract material information if available"""
+    def _get_reference_modulus(self) -> Optional[float]:
+        """Get a reference elastic modulus for the section"""
+        try:
+            if hasattr(self.section.geometry, 'material'):
+                if hasattr(self.section.geometry.material, 'elastic_modulus'):
+                    return self.section.geometry.material.elastic_modulus
+            
+            # Try to get from first material in list
+            if hasattr(self.section.geometry, 'materials'):
+                if self.section.geometry.materials:
+                    first_mat = list(self.section.geometry.materials)[0]
+                    if hasattr(first_mat, 'elastic_modulus'):
+                        return first_mat.elastic_modulus
+            
+            return None
+        except:
+            return None
+    
+    def _get_material_info(self) -> Dict[str, Any]:
+        """Get material information from the section"""
+        info = {}
+        
         try:
             if hasattr(self.section.geometry, 'material'):
                 mat = self.section.geometry.material
-                return {
-                    'name': getattr(mat, 'name', 'Unknown'),
-                    'elastic_modulus': getattr(mat, 'elastic_modulus', None),
-                    'poissons_ratio': getattr(mat, 'poissons_ratio', None),
-                    'yield_strength': getattr(mat, 'yield_strength', None),
-                    'density': getattr(mat, 'density', None)
-                }
+                if mat:
+                    info['name'] = getattr(mat, 'name', 'Unknown')
+                    info['elastic_modulus'] = getattr(mat, 'elastic_modulus', 0)
+                    info['poissons_ratio'] = getattr(mat, 'poissons_ratio', 0)
+                    info['yield_strength'] = getattr(mat, 'yield_strength', 0)
+                    info['density'] = getattr(mat, 'density', 0)
+            
+            # Check for multiple materials
+            if hasattr(self.section.geometry, 'materials'):
+                if self.section.geometry.materials and len(self.section.geometry.materials) > 1:
+                    info['is_multi_material'] = True
+                    info['material_count'] = len(self.section.geometry.materials)
         except:
             pass
-        return None
+        
+        return info
     
-    def _validate_properties(self, props: Dict[str, Any]) -> Dict[str, Any]:
+    def _validate_properties(self, properties: Dict[str, Any]) -> Dict[str, Any]:
         """Validate and clean property values"""
-        for key in props:
-            if props[key] is None or np.isnan(props[key]) or np.isinf(props[key]):
-                props[key] = 0.0
-        return props
+        cleaned = {}
+        
+        for key, value in properties.items():
+            if value is None:
+                cleaned[key] = 0
+            elif isinstance(value, (int, float)):
+                # Check for NaN or Inf
+                if np.isnan(value) or np.isinf(value):
+                    cleaned[key] = 0
+                else:
+                    cleaned[key] = value
+            else:
+                cleaned[key] = value
+        
+        return cleaned
     
     def _get_fallback_properties(self) -> Dict[str, Any]:
-        """Return minimal properties in case of failure"""
+        """Get minimal fallback properties if analysis fails"""
         try:
             area = self.section.get_area()
             cx, cy = self.section.get_c()
@@ -349,33 +390,28 @@ class CompositeSectionAnalyzer:
     
     def __init__(self):
         self.sections = []
-        self.geometries = []
         self.combined_section = None
         
-    def add_section(self, geometry, material=None, name=None, offset=(0, 0)):
+    def add_section(self, section, name=None, offset=(0, 0)):
         """
         Add a section to the composite
         
         Args:
-            geometry: Section geometry from sectionproperties
-            material: Optional material properties
+            section: Section object from sectionproperties
             name: Optional name for the section
             offset: (x, y) offset for positioning
         """
-        # Apply offset if specified
-        if offset != (0, 0):
-            geometry = geometry.shift_section(x_offset=offset[0], y_offset=offset[1])
-        
-        # Store section info
         self.sections.append({
-            'geometry': geometry,
-            'material': material,
+            'section': section,
             'name': name or f"Section_{len(self.sections)+1}",
             'offset': offset
         })
-        
-        self.geometries.append(geometry)
-        
+    
+    def clear_sections(self):
+        """Clear all sections"""
+        self.sections = []
+        self.combined_section = None
+    
     def create_composite(self) -> Tuple[Any, List[str]]:
         """
         Create a composite section from all added sections
@@ -385,73 +421,92 @@ class CompositeSectionAnalyzer:
         """
         messages = []
         
-        if len(self.geometries) == 0:
+        if len(self.sections) == 0:
             raise ValueError("No sections added to composite")
         
-        if len(self.geometries) == 1:
-            messages.append("ℹ️ Only one section provided - analyzing as single section")
-            combined_geom = self.geometries[0]
-        else:
-            messages.append(f"✓ Combining {len(self.geometries)} sections into composite")
+        if len(self.sections) == 1:
+            messages.append("ℹ️ Only one section provided")
+            self.combined_section = self.sections[0]['section']
+            return self.combined_section, messages
+        
+        messages.append(f"✓ Combining {len(self.sections)} sections into composite")
+        
+        try:
+            # Get geometries from sections
+            first_section_data = self.sections[0]
+            combined_geom = first_section_data['section'].geometry.copy()
             
-            # Combine geometries using addition
-            combined_geom = self.geometries[0]
-            for geom in self.geometries[1:]:
+            # Apply first offset if needed
+            if first_section_data['offset'] != (0, 0):
+                combined_geom = combined_geom.shift_section(
+                    x_offset=first_section_data['offset'][0],
+                    y_offset=first_section_data['offset'][1]
+                )
+            
+            # Add remaining sections
+            for section_data in self.sections[1:]:
+                geom = section_data['section'].geometry.copy()
+                
+                # Apply offset
+                if section_data['offset'] != (0, 0):
+                    geom = geom.shift_section(
+                        x_offset=section_data['offset'][0],
+                        y_offset=section_data['offset'][1]
+                    )
+                
+                # Combine geometries
                 combined_geom = combined_geom + geom
             
-            # Check if we have mixed materials
-            materials = [s['material'] for s in self.sections if s['material'] is not None]
-            if len(set(materials)) > 1:
-                messages.append("⚠️ Multiple materials detected - composite analysis will use weighted properties")
-        
-        # Create mesh
-        try:
-            combined_geom.create_mesh(mesh_sizes=[10])
-        except:
-            combined_geom.create_mesh(mesh_sizes=[5])
+            # Create mesh
+            try:
+                combined_geom.create_mesh(mesh_sizes=[10])
+            except:
+                combined_geom.create_mesh(mesh_sizes=[20])
             
-        # Create and analyze section
-        from sectionproperties.analysis import Section
-        combined_section = Section(geometry=combined_geom)
-        combined_section.calculate_geometric_properties()
-        
-        try:
-            combined_section.calculate_warping_properties()
-        except:
-            messages.append("Note: Warping properties not available for this composite")
+            # Create and analyze composite section
+            from sectionproperties.analysis import Section
+            self.combined_section = Section(geometry=combined_geom)
+            self.combined_section.calculate_geometric_properties()
             
-        try:
-            combined_section.calculate_plastic_properties()
-        except:
-            messages.append("Note: Plastic properties not available for this composite")
+            try:
+                self.combined_section.calculate_warping_properties()
+            except:
+                messages.append("Note: Warping properties not available for this composite")
+            
+            try:
+                self.combined_section.calculate_plastic_properties()
+            except:
+                messages.append("Note: Plastic properties not available for this composite")
+            
+            messages.append("✅ Composite section created successfully")
+            
+        except Exception as e:
+            raise ValueError(f"Failed to create composite: {str(e)}")
         
-        self.combined_section = combined_section
-        messages.append(f"✓ Composite section created successfully")
-        
-        return combined_section, messages
+        return self.combined_section, messages
     
     def get_summary(self) -> pd.DataFrame:
         """Get a summary of all sections in the composite"""
         data = []
-        for section in self.sections:
-            # Create temporary section for analysis
-            from sectionproperties.analysis import Section
-            temp_geom = section['geometry'].copy()
-            temp_geom.create_mesh(mesh_sizes=[10])
-            temp_section = Section(geometry=temp_geom)
-            temp_section.calculate_geometric_properties()
+        
+        for section_data in self.sections:
+            section = section_data['section']
             
-            area = temp_section.get_area()
-            cx, cy = temp_section.get_c()
+            try:
+                area = section.get_area()
+                cx, cy = section.get_c()
+            except:
+                area = 0
+                cx, cy = 0, 0
             
             data.append({
-                'Name': section['name'],
-                'Material': section['material'].name if section['material'] else 'None',
+                'Name': section_data['name'],
                 'Area': area,
-                'Centroid X': cx + section['offset'][0],
-                'Centroid Y': cy + section['offset'][1],
-                'Offset X': section['offset'][0],
-                'Offset Y': section['offset'][1]
+                'Centroid X': cx + section_data['offset'][0],
+                'Centroid Y': cy + section_data['offset'][1],
+                'Offset X': section_data['offset'][0],
+                'Offset Y': section_data['offset'][1]
             })
         
         return pd.DataFrame(data)
+```
