@@ -24,12 +24,17 @@ import matplotlib
 matplotlib.use('Agg')  # Critical for Streamlit
 import matplotlib.pyplot as plt
 
-# Try to import custom modules with error handling
+# Add the current directory to Python path to help with imports
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+# Try to import custom modules with better error handling
+modules_imported = False
 try:
     from modules.section_factory import SectionFactory
     from modules.database_manager import DatabaseManager
     from modules.calculations import SectionAnalyzer
     from modules.ui_components import UIComponents
+    modules_imported = True
 except ImportError as e:
     st.error(f"""
     ### ❌ Module Import Error
@@ -37,26 +42,42 @@ except ImportError as e:
     Could not import required modules. Please ensure:
     1. All files are in a `modules/` directory
     2. The `modules/` directory contains `__init__.py`
-    3. All required packages are installed: `pip install -r requirements.txt`
+    3. All required packages are installed
     
     **Error Details:**
     ```
     {str(e)}
     ```
     
-    **Expected Directory Structure:**
-    ```
-    project/
-    ├── Home.py
-    ├── requirements.txt
-    └── modules/
-        ├── __init__.py
-        ├── section_factory.py
-        ├── database_manager.py
-        ├── calculations.py
-        └── ui_components.py
-    ```
+    **Attempting to install missing dependencies...**
     """)
+    
+    # Try to install missing packages
+    try:
+        import subprocess
+        import sys
+        
+        # List of essential packages
+        packages = [
+            'sectionproperties',
+            'shapely',
+            'scipy',
+            'matplotlib',
+            'pandas',
+            'numpy'
+        ]
+        
+        for package in packages:
+            try:
+                __import__(package)
+            except ImportError:
+                st.info(f"Installing {package}...")
+                subprocess.check_call([sys.executable, "-m", "pip", "install", package])
+        
+        st.info("Please restart the app after installation completes.")
+    except Exception as install_error:
+        st.error(f"Failed to install packages: {install_error}")
+    
     st.stop()
 
 # Initialize session state with safe defaults
@@ -70,7 +91,8 @@ def init_session_state():
         'polygon_nodes': [(0, 0), (100, 0), (100, 100), (0, 100)],
         'node_count': 4,
         'db_manager': None,
-        'initialized': False
+        'initialized': False,
+        'error_count': 0
     }
     
     for key, value in defaults.items():
@@ -80,12 +102,19 @@ def init_session_state():
     # Initialize database manager if not exists (only once)
     if not st.session_state.initialized:
         try:
+            # Ensure data directory exists
+            os.makedirs('data', exist_ok=True)
             st.session_state.db_manager = DatabaseManager('data/sections.db')
             st.session_state.initialized = True
         except Exception as e:
-            st.error(f"⚠️ Database initialization error: {e}")
-            st.session_state.db_manager = None
-            st.session_state.initialized = True
+            st.warning(f"⚠️ Database initialization warning: {e}")
+            # Try alternative path
+            try:
+                st.session_state.db_manager = DatabaseManager('sections.db')
+                st.session_state.initialized = True
+            except:
+                st.session_state.db_manager = None
+                st.session_state.initialized = True
 
 # Initialize session state
 init_session_state()
@@ -96,11 +125,33 @@ try:
     factory = SectionFactory()
 except Exception as e:
     st.error(f"❌ Component initialization error: {e}")
+    st.info("Please check that all required packages are installed correctly.")
     st.stop()
 
 # Title and description
 st.title("🏗️ Structural Section Properties Analyzer")
 st.markdown("Create and analyze structural sections with real-time property calculations")
+
+# Check for critical dependencies
+try:
+    import sectionproperties
+    from shapely.geometry import Polygon
+except ImportError as e:
+    st.error(f"""
+    ### Critical Dependencies Missing
+    
+    The following packages are required but not installed:
+    - sectionproperties
+    - shapely
+    
+    Please install them using:
+    ```bash
+    pip install sectionproperties shapely
+    ```
+    
+    Error: {e}
+    """)
+    st.stop()
 
 # Create layout
 col1, col2 = st.columns([1, 2])
@@ -179,17 +230,28 @@ with st.sidebar:
                             st.session_state.section_name = f"{section_type}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
                             
                             st.success("✅ Analysis complete!")
+                            st.rerun()
+                    except ImportError as e:
+                        st.error(f"""
+                        ❌ Import Error: {str(e)}
+                        
+                        This typically means a required package is not installed.
+                        Please ensure all packages in requirements.txt are installed.
+                        """)
                     except Exception as e:
+                        st.session_state.error_count += 1
                         st.error(f"❌ Error: {str(e)}")
-                        with st.expander("🐛 Debug Information"):
-                            st.code(traceback.format_exc())
+                        
+                        if st.session_state.error_count > 2:
+                            with st.expander("🐛 Debug Information"):
+                                st.code(traceback.format_exc())
     
     with col_btn2:
         if st.button("💾 Save", use_container_width=True):
             if st.session_state.current_section is None:
                 st.warning("⚠️ No section to save. Analyze first!")
             elif st.session_state.db_manager is None:
-                st.error("❌ Database not initialized")
+                st.warning("⚠️ Database not available - results cannot be saved")
             else:
                 try:
                     # Save to database
@@ -214,24 +276,32 @@ with col1:
             # Create visualization
             fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 6))
             
-            # Plot geometry
-            ax1.set_title("Section Geometry")
-            st.session_state.current_section.plot_mesh(ax=ax1, materials=False)
-            ax1.set_aspect('equal')
-            ax1.grid(True, alpha=0.3)
+            # Plot geometry with error handling
+            try:
+                ax1.set_title("Section Geometry")
+                st.session_state.current_section.plot_mesh(ax=ax1, materials=False)
+                ax1.set_aspect('equal')
+                ax1.grid(True, alpha=0.3)
+            except Exception as e:
+                ax1.text(0.5, 0.5, f"Mesh plot error:\n{str(e)[:50]}", 
+                        ha='center', va='center', transform=ax1.transAxes)
             
-            # Plot centroids
-            ax2.set_title("Centroid & Principal Axes")
-            st.session_state.current_section.plot_centroids(ax=ax2)
-            ax2.set_aspect('equal')
-            ax2.grid(True, alpha=0.3)
+            # Plot centroids with error handling
+            try:
+                ax2.set_title("Centroid & Principal Axes")
+                st.session_state.current_section.plot_centroids(ax=ax2)
+                ax2.set_aspect('equal')
+                ax2.grid(True, alpha=0.3)
+            except Exception as e:
+                ax2.text(0.5, 0.5, f"Centroid plot error:\n{str(e)[:50]}", 
+                        ha='center', va='center', transform=ax2.transAxes)
             
+            plt.tight_layout()
             st.pyplot(fig)
             plt.close('all')  # Important: close all figures to free memory
         except Exception as e:
             st.error(f"❌ Visualization error: {e}")
-            with st.expander("Debug"):
-                st.code(traceback.format_exc())
+            st.info("The analysis was successful but visualization failed. Properties are still calculated.")
     else:
         st.info("👈 Configure section parameters and click 'Analyze' to visualize")
 
@@ -283,15 +353,21 @@ with col2:
                     ["Warping Constant Iw", props.get('gamma', 0), "mm⁶"],
                 ], columns=["Property", "Value", "Unit"])
                 
-                # Format the values column
-                detailed_props['Value'] = detailed_props['Value'].apply(
-                    lambda x: f"{x:.4e}" if abs(x) > 1e6 or (abs(x) < 1e-2 and x != 0) else f"{x:.4f}"
-                )
+                # Format the values column safely
+                def format_value(x):
+                    try:
+                        if abs(x) > 1e6 or (abs(x) < 1e-2 and x != 0):
+                            return f"{x:.4e}"
+                        else:
+                            return f"{x:.4f}"
+                    except:
+                        return str(x)
+                
+                detailed_props['Value'] = detailed_props['Value'].apply(format_value)
                 
                 st.dataframe(detailed_props, use_container_width=True, hide_index=True)
             except Exception as e:
                 st.error(f"❌ Error displaying properties: {e}")
-                st.code(traceback.format_exc())
         else:
             st.info("No analysis results yet. Configure and analyze a section first.")
     
@@ -299,7 +375,7 @@ with col2:
         st.header("📁 Saved Sections Database")
         
         if st.session_state.db_manager is None:
-            st.error("❌ Database not available")
+            st.warning("⚠️ Database not available - using temporary storage only")
         else:
             try:
                 # Load saved sections
@@ -314,9 +390,12 @@ with col2:
                             with col_info:
                                 st.write(f"**Created:** {section['created_at']}")
                                 if section['properties']:
-                                    props = json.loads(section['properties'])
-                                    st.write(f"**Area:** {props.get('area', 'N/A'):.2f} mm²")
-                                    st.write(f"**Ixx:** {props.get('ixx_c', 'N/A'):.2e} mm⁴")
+                                    try:
+                                        props = json.loads(section['properties'])
+                                        st.write(f"**Area:** {props.get('area', 'N/A'):.2f} mm²")
+                                        st.write(f"**Ixx:** {props.get('ixx_c', 'N/A'):.2e} mm⁴")
+                                    except:
+                                        st.write("Properties data unavailable")
                             
                             with col_action:
                                 if st.button("Load", key=f"load_{idx}"):
@@ -346,7 +425,6 @@ with col2:
                     st.info("No saved sections yet. Create and save your first section!")
             except Exception as e:
                 st.error(f"❌ Database error: {e}")
-                st.code(traceback.format_exc())
     
     with tab3:
         st.header("📥 Export Results")
@@ -393,8 +471,8 @@ with col2:
                     st.error(f"❌ JSON export error: {e}")
             
             # Batch export
-            st.subheader("Batch Export All Saved Sections")
             if st.session_state.db_manager:
+                st.subheader("Batch Export All Saved Sections")
                 try:
                     all_sections = st.session_state.db_manager.export_all_to_dataframe()
                     if not all_sections.empty:
@@ -443,12 +521,20 @@ with col2:
         - Warping constant (Iw)
         - Centroid location (cx, cy)
         
-        ### Tips:
+        ### Troubleshooting:
+        - If the app fails to load, check that all packages are installed
+        - Clear browser cache if visualizations don't update
         - Use consistent units (mm recommended)
-        - Save frequently used sections for quick access
-        - Export results for documentation
-        - Check validation messages if analysis fails
+        - For custom polygons, ensure nodes form a closed shape
         """)
+        
+        # System info for debugging
+        with st.expander("System Information"):
+            st.code(f"""
+Python version: {sys.version}
+Streamlit version: {st.__version__}
+Working directory: {os.getcwd()}
+            """)
 
 # Footer
 st.markdown("---")
